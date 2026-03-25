@@ -1,8 +1,8 @@
-# svg-to-sfsymbol
+# Overview
 
-A Python toolkit that prepares **flat SVG icons** for workflows aligned with **Apple SF Symbols**—especially the square template layout (small / medium / large rows and multiple weights). The goal is to take a single source icon and progressively normalize geometry, naming, stroke weights, and filled outlines so the results are easier to drop into symbol templates or Xcode-oriented pipelines.
+An application that converts **stroked SVG icons** to **Apple SF Symbols**. The goal is to remove the manual process of building SF Symbols for Mobile.
 
-The project is **still in development**; behavior and APIs may change. Usage and setup documentation will be added when the pipeline stabilizes.
+This project is **still in development**; behavior may change. Usage and setup documentation will be added when the pipeline stabilizes.
 
 ## What it does (pipeline overview)
 
