@@ -11,6 +11,7 @@ from svg_to_sfsymbol.phase1 import PHASE1_VARIANTS, run_phase1
 from svg_to_sfsymbol.phase2 import PHASE2_WEIGHTS, run_phase2
 from svg_to_sfsymbol.phase3 import run_phase3
 from svg_to_sfsymbol.phase4 import run_phase4
+from svg_to_sfsymbol.phase5 import default_square_template_path, run_phase5
 
 
 def _cmd_convert(args: argparse.Namespace) -> int:
@@ -73,6 +74,40 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         f"Phase 4 — expanded strokes to fills in {len(p4)} icons "
         f"({exp} element conversions total)"
     )
+
+    if args.skip_phase5:
+        return 0
+
+    tmpl_arg = args.phase5_template
+    out_arg = args.phase5_out
+    if (tmpl_arg is None) ^ (out_arg is None):
+        print(
+            "error: pass both --phase5-template and --phase5-out, or neither "
+            "(defaults apply when neither is set).",
+            file=sys.stderr,
+        )
+        return 1
+
+    if tmpl_arg is not None and out_arg is not None:
+        tmpl = tmpl_arg.expanduser().resolve()
+        out_svg = out_arg.expanduser().resolve()
+    else:
+        tmpl = default_square_template_path()
+        if tmpl is None:
+            print(
+                "Phase 5 — skipped (no default template; use --phase5-template "
+                "and --phase5-out, or add resources/square_template.svg next to "
+                "the project src tree).",
+                file=sys.stderr,
+            )
+            return 0
+        out_svg = (out / f"{input_path.stem}_sf_symbol.svg").resolve()
+
+    stats = run_phase5(tmpl, out, out_svg, missing=args.phase5_missing)
+    print(
+        f"Phase 5 — merged template -> {out_svg} "
+        f"({stats['filled']} slots filled, {stats['skipped']} missing icons skipped)"
+    )
     return 0
 
 
@@ -111,6 +146,28 @@ def _cmd_phase3(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_phase5(args: argparse.Namespace) -> int:
+    t = args.template.expanduser().resolve()
+    d = args.icons_dir.expanduser().resolve()
+    o = args.output.expanduser().resolve()
+    if not t.is_file():
+        print(f"error: template not found: {t}", file=sys.stderr)
+        return 1
+    if not d.is_dir():
+        print(f"error: not a directory: {d}", file=sys.stderr)
+        return 1
+    try:
+        stats = run_phase5(t, d, o, missing=args.missing)
+    except (ValueError, FileNotFoundError, NotADirectoryError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(
+        f"Phase 5 — wrote {o} "
+        f"({stats['filled']} slots filled, {stats['skipped']} missing icons skipped)"
+    )
+    return 0
+
+
 def _cmd_phase4(args: argparse.Namespace) -> int:
     d = args.output_dir.expanduser().resolve()
     if not d.is_dir():
@@ -128,20 +185,28 @@ def _cmd_phase4(args: argparse.Namespace) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     # Backward compatible: `python -m svg_to_sfsymbol icon.svg` → `convert icon.svg`
-    if argv and argv[0] not in ("convert", "phase2", "phase3", "phase4"):
+    if argv and argv[0] not in (
+        "convert",
+        "phase2",
+        "phase3",
+        "phase4",
+        "phase5",
+    ):
         argv = ["convert"] + argv
 
     parser = argparse.ArgumentParser(
         description=(
             "SVG → SF Symbol prep: phase 1 (sizes), phase 2 (weight files), "
-            "phase 3 (stroke-width), phase 4 (stroke → filled outline)."
+            "phase 3 (stroke-width), phase 4 (stroke → filled outline), "
+            "phase 5 (merge into Apple template)."
         )
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_convert = sub.add_parser(
         "convert",
-        help="Run phases 1–4 by default (unless stopped early).",
+        help="Run phases 1–5 by default (unless stopped early). Phase 5 uses "
+        "resources/square_template.svg when present.",
     )
     p_convert.add_argument("input", type=Path, help="Input .svg file")
     p_convert.add_argument(
@@ -170,6 +235,35 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--skip-phase4",
         action="store_true",
         help="Stop after phase 3 (keep stroked paths; do not expand to fills).",
+    )
+    p_convert.add_argument(
+        "--skip-phase5",
+        action="store_true",
+        help="After phase 4, do not merge into the SF Symbol template.",
+    )
+    p_convert.add_argument(
+        "--phase5-template",
+        type=Path,
+        default=None,
+        help=(
+            "SF Symbol square template SVG. With --phase5-out, overrides the default "
+            "(resources/square_template.svg next to the src tree when present)."
+        ),
+    )
+    p_convert.add_argument(
+        "--phase5-out",
+        type=Path,
+        default=None,
+        help=(
+            "Merged template output path. With --phase5-template, sets the destination; "
+            "otherwise the default is <output_dir>/<input_stem>_sf_symbol.svg."
+        ),
+    )
+    p_convert.add_argument(
+        "--phase5-missing",
+        choices=("skip", "warn", "fail"),
+        default="skip",
+        help="Phase 5 policy when an icon file is missing for a template slot.",
     )
     p_convert.set_defaults(func=_cmd_convert)
 
@@ -205,6 +299,35 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Directory with phase-3-processed weight icons",
     )
     p4.set_defaults(func=_cmd_phase4)
+
+    p5 = sub.add_parser(
+        "phase5",
+        help=(
+            "Merge *-{L,M,S}.svg icons from a folder into an SF Symbol square template."
+        ),
+    )
+    p5.add_argument(
+        "template",
+        type=Path,
+        help="Square SF Symbol template SVG (e.g. square_template.svg)",
+    )
+    p5.add_argument(
+        "icons_dir",
+        type=Path,
+        help="Directory containing Black-L.svg … Ultralight-S.svg",
+    )
+    p5.add_argument(
+        "output",
+        type=Path,
+        help="Path for the merged SVG output",
+    )
+    p5.add_argument(
+        "--missing",
+        choices=("skip", "warn", "fail"),
+        default="skip",
+        help="If an icon file is missing for a slot: skip (keep wireframe), warn, or fail.",
+    )
+    p5.set_defaults(func=_cmd_phase5)
 
     args = parser.parse_args(argv)
     return args.func(args)
