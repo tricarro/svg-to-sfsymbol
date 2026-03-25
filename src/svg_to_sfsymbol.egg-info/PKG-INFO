@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: svg-to-sfsymbol
+Version: 0.1.0
+Summary: Convert SVG icons toward SF Symbols (phase 1: sizes; phase 2: weight slots)
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: defusedxml>=0.7.1
+Requires-Dist: svg.path>=6.0
+Requires-Dist: shapely>=2.0
+
+# Overview
+This project contains an application to automatically convert SVG Icons into SF Symbols.

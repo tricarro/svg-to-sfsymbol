@@ -1,0 +1,3 @@
+defusedxml>=0.7.1
+svg.path>=6.0
+shapely>=2.0

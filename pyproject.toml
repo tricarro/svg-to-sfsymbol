@@ -1,0 +1,21 @@
+[project]
+name = "svg-to-sfsymbol"
+version = "0.1.0"
+description = "Convert SVG icons toward SF Symbols (sizes, weights, stroke widths, stroke→fill)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "defusedxml>=0.7.1",
+    "svg.path>=6.0",
+    "shapely>=2.0",
+]
+
+[project.scripts]
+svg-sfsymbol-phase1 = "svg_to_sfsymbol.__main__:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

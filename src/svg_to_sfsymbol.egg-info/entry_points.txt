@@ -1,0 +1,2 @@
+[console_scripts]
+svg-sfsymbol-phase1 = svg_to_sfsymbol.__main__:main
