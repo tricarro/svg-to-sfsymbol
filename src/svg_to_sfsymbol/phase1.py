@@ -71,9 +71,9 @@ class SizeVariant:
 
 
 PHASE1_VARIANTS: tuple[SizeVariant, ...] = (
-    SizeVariant("large", 120),
-    SizeVariant("medium", 90),
-    SizeVariant("small", 72),
+    SizeVariant("large", 164),
+    SizeVariant("medium", 136),
+    SizeVariant("small", 112),
 )
 
 

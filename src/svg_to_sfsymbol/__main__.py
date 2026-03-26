@@ -22,7 +22,7 @@ def _cmd_convert(args: argparse.Namespace) -> int:
 
     out = args.output_dir
     if out is None:
-        out = input_path.parent / f"{input_path.stem}_phase1"
+        out = input_path.parent / f"{input_path.stem}_SFSymbol"
     else:
         out = out.expanduser().resolve()
 
@@ -214,7 +214,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=Path,
         nargs="?",
         default=None,
-        help="Output directory (default: <input_stem>_phase1 next to input)",
+        help="Output directory (default: <input_stem>_SFSymbol next to input)",
     )
     p_convert.add_argument(
         "--original-name",

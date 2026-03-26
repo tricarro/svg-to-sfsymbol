@@ -21,7 +21,7 @@ Processing is organized into **phases**, each building on the previous output:
    Expands stroked paths into **filled outlines** (polygonal approximation via sampling and Shapely buffering), strips stroke presentation where converted, and **merges** sibling paths that share the same fill when safe—reducing the number of `<path>` elements while preserving appearance.
 
 5. **Phase 5 — SF Symbol template**  
-   Merges the generated weight×size SVGs into Apple’s **square SF Symbol template** (`resources/square_template.svg` when present). Each icon is placed in the matching `<g id="…">` under `<g id="Symbols">`, **scaled uniformly and centered** to the slot’s preview wireframe bounding box, then the **wireframe path** is removed. The result is a single SVG that preserves the template’s guides, notes, and layout for symbol preview workflows.
+   Merges the generated weight×size SVGs into Apple’s **square SF Symbol template** (`resources/square_template.svg` when present). Each icon is placed in the matching `<g id="…">` under `<g id="Symbols">`, **centered** (translate only) on the slot’s preview wireframe bounding box—**no scaling**—then the **wireframe path** is removed. The result is a single SVG that preserves the template’s guides, notes, and layout for symbol preview workflows.
 
 ## Implementation notes
 

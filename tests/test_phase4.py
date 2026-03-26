@@ -47,7 +47,8 @@ def test_phase4_pipeline_calendar() -> None:
         tree = ET.parse(out / "Regular-M.svg")
         r = tree.getroot()
         paths = r.findall(".//{http://www.w3.org/2000/svg}path")
-        assert len(paths) == 1
+        # Merge disabled: 1 fill-only path + 5 stroke→fill conversions = 6 paths.
+        assert len(paths) == 6
         for el in paths:
             assert el.get("stroke") is None
             assert el.get("stroke-width") is None

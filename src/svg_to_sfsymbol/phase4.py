@@ -20,10 +20,11 @@ Phase 4: expand stroked geometry into filled outlines (stroke → fill).
 
 Fill-only paths are not modified.
 
-After stroke expansion, **merge** pass: sibling ``path`` elements with the same
-fill (and fill-rule / fill-opacity) and no stroke are combined via
-``unary_union`` into a single path where possible (fewer DOM nodes, one compound
-``d``). Paths under ``defs`` are not merged.
+After stroke expansion, a **merge** pass (currently **disabled** in
+``expand_strokes_in_tree``) would combine sibling ``path`` elements with the
+same fill via ``unary_union``; it was corrupting holes / multi-shape icons.
+``merge_fill_paths_in_tree`` remains available if re-enabled later. Paths under
+``defs`` are not merged.
 """
 
 from __future__ import annotations
@@ -695,7 +696,9 @@ def expand_strokes_in_tree(root: ET.Element, *, flatness: float = 1.0) -> int:
                 if _convert_line_like_element_simple(el, parent, tag, flatness):
                     converted += 1
                     changed = True
-    merge_fill_paths_in_tree(root, flatness=flatness)
+    # Disabled: merging sibling paths with unary_union corrupts compound paths (holes)
+    # and multi-shape icons (e.g. stroke-expanded PiP). See merge_fill_paths_in_tree.
+    # merge_fill_paths_in_tree(root, flatness=flatness)
     return converted
 
 

@@ -20,7 +20,7 @@ def test_wireframe_bbox_square() -> None:
     assert (bx, by, bw, bh) == (0.0, 0.0, 10.0, 10.0)
 
 
-def test_phase5_fits_icon_removes_wireframe(tmp_path: Path) -> None:
+def test_phase5_centers_icon_removes_wireframe(tmp_path: Path) -> None:
     template = tmp_path / "t.svg"
     template.write_text(
         """<?xml version="1.0" encoding="UTF-8"?>
@@ -59,15 +59,12 @@ def test_phase5_fits_icon_removes_wireframe(tmp_path: Path) -> None:
     assert len(groups) == 1
     wrap = groups[0]
     tf = wrap.get("transform", "")
-    m = re.match(
-        r"translate\(\s*([-\d.]+)\s+([-\d.]+)\s*\)\s+scale\(\s*([-\d.eE+]+)\s*\)",
-        tf,
-    )
+    m = re.fullmatch(r"translate\(\s*([-\d.]+)\s+([-\d.]+)\s*\)", tf.strip())
     assert m is not None, tf
-    tx, ty, sc = float(m.group(1)), float(m.group(2)), float(m.group(3))
-    assert abs(sc - 10.0 / 120.0) < 1e-5
-    assert abs(tx - 0.0) < 1e-5
-    assert abs(ty - 0.0) < 1e-5
+    tx, ty = float(m.group(1)), float(m.group(2))
+    # Wireframe 10×10 centered at (5,5); icon viewBox 120×120 centered at (60,60).
+    assert abs(tx - (-55.0)) < 1e-5
+    assert abs(ty - (-55.0)) < 1e-5
 
     paths = wrap.findall(".//svg:path", ns)
     assert len(paths) == 1

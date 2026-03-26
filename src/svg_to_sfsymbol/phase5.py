@@ -3,8 +3,8 @@ Phase 5: merge generated weight×size SVGs into Apple's SF Symbol square templat
 
 For each ``<g id="Black-L">`` … under ``<g id="Symbols">``, replace the
 ``SFSymbolsPreviewWireframe`` path with the corresponding ``{id}.svg`` content,
-uniformly scaled and centered to the wireframe path's bounding box in local
-coordinates, then remove the wireframe.
+**translated** so the icon's viewBox is **centered** on the wireframe path's
+bounding box in local coordinates (no scaling), then remove the wireframe.
 """
 
 from __future__ import annotations
@@ -139,13 +139,16 @@ def _fill_slot(
     bx, by, bw, bh = _wireframe_bbox(d)
 
     icon_root = parse_svg_file(icon_path)
-    _ox, _oy, sw, sh = read_view_box(icon_root)
+    ox, oy, sw, sh = read_view_box(icon_root)
     if sw <= 0 or sh <= 0:
         raise ValueError(f"Invalid icon viewBox dimensions in {icon_path}")
 
-    scale = min(bw / sw, bh / sh)
-    tx = bx + (bw - scale * sw) / 2.0
-    ty = by + (bh - scale * sh) / 2.0
+    cx_box = bx + bw / 2.0
+    cy_box = by + bh / 2.0
+    cx_icon = ox + sw / 2.0
+    cy_icon = oy + sh / 2.0
+    tx = cx_box - cx_icon
+    ty = cy_box - cy_icon
 
     defs_nodes, visual = _partition_icon_children(icon_root)
     if defs_nodes:
@@ -154,7 +157,7 @@ def _fill_slot(
     slot.remove(wire)
 
     wrap = ET.Element(_G_TAG)
-    wrap.set("transform", f"translate({tx} {ty}) scale({scale})")
+    wrap.set("transform", f"translate({tx} {ty})")
     for node in visual:
         wrap.append(copy.deepcopy(node))
     slot.append(wrap)
