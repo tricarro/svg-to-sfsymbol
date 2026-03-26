@@ -1,0 +1,21 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^5.4.21"
+  },
+  "dependencies": {
+    "@momentum-design/components": "^0.133.19",
+    "@momentum-design/fonts": "^0.2.5",
+    "@momentum-design/icons": "^0.51.0",
+    "@momentum-design/tokens": "^0.10.1"
+  }
+}

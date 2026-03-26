@@ -1,12 +1,74 @@
 Metadata-Version: 2.4
 Name: svg-to-sfsymbol
 Version: 0.1.0
-Summary: Convert SVG icons toward SF Symbols (phase 1: sizes; phase 2: weight slots)
+Summary: Convert SVG icons toward SF Symbols (sizes, weights, stroke widths, stroke→fill)
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
 Requires-Dist: defusedxml>=0.7.1
 Requires-Dist: svg.path>=6.0
 Requires-Dist: shapely>=2.0
+Provides-Extra: web
+Requires-Dist: fastapi>=0.115.0; extra == "web"
+Requires-Dist: httpx>=0.27.0; extra == "web"
+Requires-Dist: python-multipart>=0.0.9; extra == "web"
+Requires-Dist: uvicorn[standard]>=0.32.0; extra == "web"
 
 # Overview
-This project contains an application to automatically convert SVG Icons into SF Symbols.
+
+An application that converts **stroked SVG icons** to **Apple SF Symbols**. The goal is to remove the manual process of building SF Symbols for Mobile.
+
+This project is **still in development**; behavior may change. Usage and setup documentation will be added when the pipeline stabilizes.
+
+## What it does (pipeline overview)
+
+Processing is organized into **phases**, each building on the previous output:
+
+1. **Phase 1 — Size variants**  
+   Copies the original SVG and produces square canvases at **large (120×120)**, **medium (90×90)**, and **small (72×72)** user units. Geometry is scaled and centered using **baked coordinates** (affine transforms applied to paths and basic shapes) so stroke widths are not inflated by a parent `scale()` transform.
+
+2. **Phase 2 — Weight slots**  
+   Duplicates each size into nine **weight-named** files (e.g. `Regular-M.svg`, `Black-L.svg`) matching the usual SF Symbols weight order, then removes the intermediate `large.svg` / `medium.svg` / `small.svg` files. The original upload is kept separately.
+
+3. **Phase 3 — Path weights**  
+   Assigns **stroke-width** values per weight and scale (L / M / S) from a fixed table that matches the SF Symbol path-weight grid used in design references.
+
+4. **Phase 4 — Stroke to fill**  
+   Expands stroked paths into **filled outlines** (polygonal approximation via sampling and Shapely buffering), strips stroke presentation where converted, and **merges** sibling paths that share the same fill when safe—reducing the number of `<path>` elements while preserving appearance.
+
+5. **Phase 5 — SF Symbol template**  
+   Merges the generated weight×size SVGs into Apple’s **square SF Symbol template** (`resources/square_template.svg` when present). Each icon is placed in the matching `<g id="…">` under `<g id="Symbols">`, **centered** (translate only) on the slot’s preview wireframe bounding box—**no scaling**—then the **wireframe path** is removed. The result is a single SVG that preserves the template’s guides, notes, and layout for symbol preview workflows.
+
+## Web UI and API
+
+Install Python with the `web` extra, then run the API and the Vite dev server:
+
+```bash
+pip install -e ".[web]"
+uvicorn svg_to_sfsymbol.web_api:app --reload --host 127.0.0.1 --port 8000
+```
+
+In another terminal:
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Open the URL shown by Vite (typically `http://localhost:5173`). Upload a stroked SVG, choose **Convert**, then download the merged SF Symbol SVG.
+
+Phase 5 requires a square SF Symbol template SVG. With `resources/square_template.svg` at the **repository root** (next to the `src/` tree), the CLI and web API pick it up automatically—no env var needed. To use a different file, set:
+
+```bash
+export SFSYMBOL_TEMPLATE_PATH=/path/to/square_template.svg
+```
+
+For production, build the frontend (`npm run build` in `frontend/`) and run uvicorn; if `frontend/dist` exists, the API serves it at `/` while `POST /api/convert` remains available.
+
+## Implementation notes
+
+- **Security:** Untrusted SVG input is parsed with **defusedxml** to reduce XML entity / DTD risks.
+- **Geometry:** **svg.path** is used for path parsing and sampling; **Shapely** handles buffering, unions, and merging filled regions.
+- **Resources:** Reference assets under `resources/` include `square_template.svg` for phase 5. Some tests also expect a sample stroked icon `resources/calendar-today.svg`; without it, those tests are skipped or fail until you add that file.
+
+## License / status
+
+Work in progress; see the repository for license and contribution expectations once they are finalized.

@@ -6,7 +6,10 @@ src/svg_to_sfsymbol/phase1.py
 src/svg_to_sfsymbol/phase2.py
 src/svg_to_sfsymbol/phase3.py
 src/svg_to_sfsymbol/phase4.py
+src/svg_to_sfsymbol/phase5.py
+src/svg_to_sfsymbol/pipeline.py
 src/svg_to_sfsymbol/svg_affine_bake.py
+src/svg_to_sfsymbol/web_api.py
 src/svg_to_sfsymbol.egg-info/PKG-INFO
 src/svg_to_sfsymbol.egg-info/SOURCES.txt
 src/svg_to_sfsymbol.egg-info/dependency_links.txt
@@ -17,3 +20,5 @@ tests/test_phase1.py
 tests/test_phase2.py
 tests/test_phase3.py
 tests/test_phase4.py
+tests/test_phase5.py
+tests/test_web_api.py

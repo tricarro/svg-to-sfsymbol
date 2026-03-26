@@ -7,11 +7,12 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from svg_to_sfsymbol.phase1 import PHASE1_VARIANTS, run_phase1
+from svg_to_sfsymbol.phase1 import PHASE1_VARIANTS
 from svg_to_sfsymbol.phase2 import PHASE2_WEIGHTS, run_phase2
 from svg_to_sfsymbol.phase3 import run_phase3
 from svg_to_sfsymbol.phase4 import run_phase4
-from svg_to_sfsymbol.phase5 import default_square_template_path, run_phase5
+from svg_to_sfsymbol.phase5 import run_phase5
+from svg_to_sfsymbol.pipeline import run_full_convert
 
 
 def _cmd_convert(args: argparse.Namespace) -> int:
@@ -27,15 +28,29 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         out = out.expanduser().resolve()
 
     try:
-        paths = run_phase1(
+        result = run_full_convert(
             input_path,
             out,
             original_name=args.original_name,
+            phase1_only=args.phase1_only,
+            skip_phase3=args.skip_phase3,
+            skip_phase4=args.skip_phase4,
+            skip_phase5=args.skip_phase5,
+            phase5_template=args.phase5_template,
+            phase5_out=args.phase5_out,
+            phase5_missing=args.phase5_missing,
         )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    except FileNotFoundError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"error: phase 2 failed: {e}", file=sys.stderr)
+        return 1
 
+    paths = result.phase1_paths
     print(f"Phase 1 — wrote under {out}:")
     print(f"  original -> {paths['original']}")
     for v in PHASE1_VARIANTS:
@@ -44,12 +59,8 @@ def _cmd_convert(args: argparse.Namespace) -> int:
     if args.phase1_only:
         return 0
 
-    try:
-        p2 = run_phase2(out)
-    except OSError as e:
-        print(f"error: phase 2 failed: {e}", file=sys.stderr)
-        return 1
-
+    p2 = result.phase2_written
+    assert p2 is not None
     print(
         f"Phase 2 — wrote {len(p2)} files ({PHASE2_WEIGHTS[0]}-L … "
         f"{PHASE2_WEIGHTS[-1]}-S); removed large.svg, medium.svg, small.svg"
@@ -58,7 +69,8 @@ def _cmd_convert(args: argparse.Namespace) -> int:
     if args.skip_phase3:
         return 0
 
-    p3 = run_phase3(out)
+    p3 = result.phase3_counts
+    assert p3 is not None
     touched = sum(1 for c in p3.values() if c > 0)
     print(
         f"Phase 3 — stroke-width applied in {len(p3)} icons "
@@ -68,7 +80,8 @@ def _cmd_convert(args: argparse.Namespace) -> int:
     if args.skip_phase4:
         return 0
 
-    p4 = run_phase4(out)
+    p4 = result.phase4_counts
+    assert p4 is not None
     exp = sum(p4.values())
     print(
         f"Phase 4 — expanded strokes to fills in {len(p4)} icons "
@@ -78,34 +91,19 @@ def _cmd_convert(args: argparse.Namespace) -> int:
     if args.skip_phase5:
         return 0
 
-    tmpl_arg = args.phase5_template
-    out_arg = args.phase5_out
-    if (tmpl_arg is None) ^ (out_arg is None):
+    if result.merged_svg is None:
         print(
-            "error: pass both --phase5-template and --phase5-out, or neither "
-            "(defaults apply when neither is set).",
+            "Phase 5 — skipped (no default template; use --phase5-template "
+            "and --phase5-out, or add resources/square_template.svg next to "
+            "the project src tree).",
             file=sys.stderr,
         )
-        return 1
+        return 0
 
-    if tmpl_arg is not None and out_arg is not None:
-        tmpl = tmpl_arg.expanduser().resolve()
-        out_svg = out_arg.expanduser().resolve()
-    else:
-        tmpl = default_square_template_path()
-        if tmpl is None:
-            print(
-                "Phase 5 — skipped (no default template; use --phase5-template "
-                "and --phase5-out, or add resources/square_template.svg next to "
-                "the project src tree).",
-                file=sys.stderr,
-            )
-            return 0
-        out_svg = (out / f"{input_path.stem}_sf_symbol.svg").resolve()
-
-    stats = run_phase5(tmpl, out, out_svg, missing=args.phase5_missing)
+    stats = result.phase5_stats
+    assert stats is not None
     print(
-        f"Phase 5 — merged template -> {out_svg} "
+        f"Phase 5 — merged template -> {result.merged_svg} "
         f"({stats['filled']} slots filled, {stats['skipped']} missing icons skipped)"
     )
     return 0
@@ -256,7 +254,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help=(
             "Merged template output path. With --phase5-template, sets the destination; "
-            "otherwise the default is <output_dir>/<input_stem>_sf_symbol.svg."
+            "otherwise the default is <output_dir>/<input_stem>_SFSymbol.svg."
         ),
     )
     p_convert.add_argument(

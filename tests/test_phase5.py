@@ -191,7 +191,7 @@ def test_convert_runs_phase5_by_default(tmp_path: Path) -> None:
         check=False,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    merged = out_dir / "calendar-today_sf_symbol.svg"
+    merged = out_dir / "calendar-today_SFSymbol.svg"
     assert merged.is_file()
 
 
@@ -220,4 +220,4 @@ def test_convert_skip_phase5_no_merged_file(tmp_path: Path) -> None:
         check=False,
     )
     assert proc.returncode == 0
-    assert not (out_dir / "calendar-today_sf_symbol.svg").exists()
+    assert not (out_dir / "calendar-today_SFSymbol.svg").exists()

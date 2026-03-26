@@ -10,6 +10,14 @@ dependencies = [
     "shapely>=2.0",
 ]
 
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.115.0",
+    "httpx>=0.27.0",
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.32.0",
+]
+
 [project.scripts]
 svg-sfsymbol-phase1 = "svg_to_sfsymbol.__main__:main"
 

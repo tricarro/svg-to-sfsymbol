@@ -1,0 +1,254 @@
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--mds-font-family-default, 'Inter', system-ui, sans-serif);
+  background-color: var(--mds-color-core-gray-100);
+  color: var(--mds-color-theme-text-primary-normal);
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/*
+ * Figma frame "Desktop - 1" (node 1:2): base fill matches design tokens
+ * theme/background/gradient/primary/normal — see
+ * https://www.figma.com/design/rEZlP3EZ21WVGIOwEpie0N/Untitled?node-id=1-2
+ */
+.hero {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem 1.25rem 3rem;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: linear-gradient(
+    -15.513206689388184deg,
+    var(--mds-color-core-gray-95) 4.5165%,
+    var(--mds-color-core-gray-100) 87.74%
+  );
+}
+
+/* Blurred mesh vectors from the same file (Gradient groups 1:1855 + 1:1832), exported as SVG */
+.hero-mesh {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero-mesh__layer {
+  position: absolute;
+  display: block;
+  width: min(220vmin, 2800px);
+  height: min(220vmin, 2800px);
+  max-width: none;
+  left: 50%;
+  top: 50%;
+  transform-origin: center center;
+  object-fit: contain;
+}
+
+/* Placement: biased toward left/right viewport edges (translate % is of layer size) */
+.hero-mesh__layer--1 {
+  opacity: 0.7;
+  transform: translate(-92%, -58%) rotate(-42deg) scaleY(0.85);
+}
+
+.hero-mesh__layer--2 {
+  opacity: 0.7;
+  transform: translate(62%, -8%) rotate(-73deg) scaleY(0.95);
+  width: min(90vmin, 900px);
+  height: min(90vmin, 900px);
+}
+
+.hero-mesh__layer--3 {
+  opacity: 0.7;
+  transform: translate(42%, 48%) rotate(21deg) scaleY(0.95) skewX(17deg);
+}
+
+.hero-mesh__layer--4 {
+  opacity: 0.6;
+  transform: translate(-58%, -95%) rotate(140deg) scaleY(0.85);
+}
+
+.hero-mesh__layer--5 {
+  opacity: 0.6;
+  transform: translate(-128%, 5%) rotate(61deg) skewX(17deg);
+}
+
+.hero-mesh__layer--6 {
+  opacity: 0.55;
+  mix-blend-mode: plus-lighter;
+  transform: translate(-78%, -108%) rotate(97deg) skewX(17deg) scaleY(0.95);
+  width: min(120vmin, 1400px);
+  height: min(120vmin, 1400px);
+}
+
+.hero-mesh__layer--7 {
+  opacity: 0.6;
+  transform: translate(82%, 22%) rotate(109deg) scaleY(0.95);
+  width: min(90vmin, 900px);
+  height: min(90vmin, 900px);
+}
+
+/* Figma: Container — glass, blur, 12px radius, shadow */
+.glass-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.5rem;
+  padding: 5rem 2.5rem;
+  border-radius: 12px;
+  background: var(--mds-color-theme-background-glass-medium);
+  backdrop-filter: blur(100px);
+  -webkit-backdrop-filter: blur(100px);
+  box-shadow: 20px 20px 20px 0
+    color-mix(in srgb, var(--mds-color-theme-background-solid-primary-normal) 15%, transparent);
+  box-sizing: border-box;
+}
+
+@media (max-width: 640px) {
+  .glass-card {
+    padding: 3rem 1.5rem;
+    gap: 2rem;
+  }
+}
+
+.glass-card__intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+  width: 100%;
+}
+
+.glass-card__title {
+  margin: 0;
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  font-feature-settings: 'ss02' 1;
+  color: var(--mds-color-theme-outline-high-contrast-focus);
+}
+
+.glass-card__body {
+  margin: 0;
+  max-width: 32rem;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  font-feature-settings: 'ss02' 1;
+  color: var(--mds-color-theme-text-primary-normal);
+}
+
+.glass-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.glass-card__spinner {
+  flex-shrink: 0;
+}
+
+/* Figma: Simple Buttons / Pill */
+.btn-pill {
+  appearance: none;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.5;
+  font-feature-settings: 'ss02' 1;
+  height: 40px;
+  padding: 0.5rem 1rem;
+  border-radius: 100px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.btn-pill:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.btn-pill--secondary {
+  background: var(--mds-color-theme-button-secondary-normal);
+  border-color: var(--mds-color-theme-outline-button-normal);
+  color: var(--mds-color-theme-text-primary-normal);
+}
+
+.btn-pill--secondary:hover:not(:disabled) {
+  background: var(--mds-color-theme-button-secondary-hover);
+}
+
+.btn-pill--primary {
+  background: var(--mds-color-theme-button-primary-normal);
+  color: var(--mds-color-theme-inverted-text-primary-normal);
+}
+
+.btn-pill--primary:hover:not(:disabled) {
+  background: var(--mds-color-theme-button-primary-hover);
+}
+
+.glass-card__file {
+  margin: -1.25rem 0 0;
+  width: 100%;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--mds-color-theme-text-secondary-normal);
+  word-break: break-all;
+}
+
+.toast-stack {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: min(24rem, 100vw - 2rem);
+}
+
+.toast-stack mdc-toast[hidden] {
+  display: none !important;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
