@@ -1,0 +1,12 @@
+import type { Document as SvgDocument, Element as SvgElement } from "@xmldom/xmldom";
+import type { PathLike } from "node:fs";
+export type { SvgDocument, SvgElement };
+export declare const SVG_NS = "http://www.w3.org/2000/svg";
+export declare function stripDoctype(xml: string): string;
+export declare function localTag(el: SvgElement): string;
+export declare function parseSvgXml(xml: string): SvgDocument;
+export declare function parseSvgFile(path: PathLike): SvgDocument;
+export declare function svgDocumentElement(doc: SvgDocument): SvgElement;
+export declare function elementChildren(el: SvgElement): SvgElement[];
+export declare function deepCloneElement(el: SvgElement): SvgElement;
+export declare function elementToBytes(root: SvgElement): Buffer;

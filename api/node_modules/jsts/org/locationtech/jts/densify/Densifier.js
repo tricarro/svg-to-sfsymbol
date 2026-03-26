@@ -1,0 +1,86 @@
+import LineString from '../geom/LineString.js'
+import CoordinateList from '../geom/CoordinateList.js'
+import GeometryTransformer from '../geom/util/GeometryTransformer.js'
+import IllegalArgumentException from '../../../../java/lang/IllegalArgumentException.js'
+import BufferOp from '../operation/buffer/BufferOp.js'
+import MultiPolygon from '../geom/MultiPolygon.js'
+import LineSegment from '../geom/LineSegment.js'
+export default class Densifier {
+  constructor() {
+    Densifier.constructor_.apply(this, arguments)
+  }
+  static constructor_() {
+    this._inputGeom = null
+    this._distanceTolerance = null
+    const inputGeom = arguments[0]
+    this._inputGeom = inputGeom
+  }
+  static densify(geom, distanceTolerance) {
+    const densifier = new Densifier(geom)
+    densifier.setDistanceTolerance(distanceTolerance)
+    return densifier.getResultGeometry()
+  }
+  static densifyPoints(pts, distanceTolerance, precModel) {
+    const seg = new LineSegment()
+    const coordList = new CoordinateList()
+    for (let i = 0; i < pts.length - 1; i++) {
+      seg.p0 = pts[i]
+      seg.p1 = pts[i + 1]
+      coordList.add(seg.p0, false)
+      const len = seg.getLength()
+      const densifiedSegCount = Math.trunc(len / distanceTolerance) + 1
+      if (densifiedSegCount > 1) {
+        const densifiedSegLen = len / densifiedSegCount
+        for (let j = 1; j < densifiedSegCount; j++) {
+          const segFract = j * densifiedSegLen / len
+          const p = seg.pointAlong(segFract)
+          precModel.makePrecise(p)
+          coordList.add(p, false)
+        }
+      }
+    }
+    coordList.add(pts[pts.length - 1], false)
+    return coordList.toCoordinateArray()
+  }
+  setDistanceTolerance(distanceTolerance) {
+    if (distanceTolerance <= 0.0) throw new IllegalArgumentException('Tolerance must be positive')
+    this._distanceTolerance = distanceTolerance
+  }
+  getResultGeometry() {
+    return new DensifyTransformer(this._distanceTolerance).transform(this._inputGeom)
+  }
+}
+class DensifyTransformer extends GeometryTransformer {
+  constructor() {
+    super()
+    DensifyTransformer.constructor_.apply(this, arguments)
+  }
+  static constructor_() {
+    this.distanceTolerance = null
+    const distanceTolerance = arguments[0]
+    this.distanceTolerance = distanceTolerance
+  }
+  transformCoordinates(coords, parent) {
+    const inputPts = coords.toCoordinateArray()
+    let newPts = Densifier.densifyPoints(inputPts, this.distanceTolerance, parent.getPrecisionModel())
+    if (parent instanceof LineString && newPts.length === 1) 
+      newPts = new Array(0).fill(null)
+    
+    return this._factory.getCoordinateSequenceFactory().create(newPts)
+  }
+  transformPolygon(geom, parent) {
+    const roughGeom = super.transformPolygon.call(this, geom, parent)
+    if (parent instanceof MultiPolygon) 
+      return roughGeom
+    
+    return this.createValidArea(roughGeom)
+  }
+  createValidArea(roughAreaGeom) {
+    return BufferOp.bufferOp(roughAreaGeom, 0.0)
+  }
+  transformMultiPolygon(geom, parent) {
+    const roughGeom = super.transformMultiPolygon.call(this, geom, parent)
+    return this.createValidArea(roughGeom)
+  }
+}
+Densifier.DensifyTransformer = DensifyTransformer

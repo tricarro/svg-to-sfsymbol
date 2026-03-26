@@ -1,0 +1,25 @@
+import System from '../../../java/lang/System.js'
+export default class JTSVersion {
+  static main(args) {
+    System.out.println(JTSVersion.CURRENT_VERSION)
+  }
+  getMinor() {
+    return JTSVersion.MINOR
+  }
+  getPatch() {
+    return JTSVersion.PATCH
+  }
+  getMajor() {
+    return JTSVersion.MAJOR
+  }
+  toString() {
+    const ver = JTSVersion.MAJOR + '.' + JTSVersion.MINOR + '.' + JTSVersion.PATCH
+    if (JTSVersion.RELEASE_INFO !== null && JTSVersion.RELEASE_INFO.length > 0) return ver + ' ' + JTSVersion.RELEASE_INFO
+    return ver
+  }
+}
+JTSVersion.CURRENT_VERSION = new JTSVersion()
+JTSVersion.MAJOR = 1
+JTSVersion.MINOR = 17
+JTSVersion.PATCH = 0
+JTSVersion.RELEASE_INFO = 'SNAPSHOT'

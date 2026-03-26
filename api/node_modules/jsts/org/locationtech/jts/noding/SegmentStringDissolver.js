@@ -1,0 +1,53 @@
+import hasInterface from '../../../../hasInterface.js'
+import Collection from '../../../../java/util/Collection.js'
+import OrientedCoordinateArray from './OrientedCoordinateArray.js'
+import SegmentString from './SegmentString.js'
+import CoordinateArrays from '../geom/CoordinateArrays.js'
+import TreeMap from '../../../../java/util/TreeMap.js'
+export default class SegmentStringDissolver {
+  constructor() {
+    SegmentStringDissolver.constructor_.apply(this, arguments)
+  }
+  static constructor_() {
+    this._merger = null
+    this._ocaMap = new TreeMap()
+    if (arguments.length === 0) {
+      SegmentStringDissolver.constructor_.call(this, null)
+    } else if (arguments.length === 1) {
+      const merger = arguments[0]
+      this._merger = merger
+    }
+  }
+  add(oca, segString) {
+    this._ocaMap.put(oca, segString)
+  }
+  getDissolved() {
+    return this._ocaMap.values()
+  }
+  dissolve() {
+    if (hasInterface(arguments[0], Collection)) {
+      const segStrings = arguments[0]
+      for (let i = segStrings.iterator(); i.hasNext(); ) 
+        this.dissolve(i.next())
+      
+    } else if (hasInterface(arguments[0], SegmentString)) {
+      const segString = arguments[0]
+      const oca = new OrientedCoordinateArray(segString.getCoordinates())
+      const existing = this.findMatching(oca, segString)
+      if (existing === null) {
+        this.add(oca, segString)
+      } else 
+        if (this._merger !== null) {
+          const isSameOrientation = CoordinateArrays.equals(existing.getCoordinates(), segString.getCoordinates())
+          this._merger.merge(existing, segString, isSameOrientation)
+        }
+      
+    }
+  }
+  findMatching(oca, segString) {
+    const matchSS = this._ocaMap.get(oca)
+    return matchSS
+  }
+}
+function SegmentStringMerger() {}
+SegmentStringDissolver.SegmentStringMerger = SegmentStringMerger
