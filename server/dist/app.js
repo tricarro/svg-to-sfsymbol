@@ -69,7 +69,7 @@ export function convertSync(svgBytes, originalFilename) {
 }
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const FRONTEND_DIST = join(__dirname, "..", "..", "frontend", "dist");
+const WEB_DIST = join(__dirname, "..", "..", "web", "dist");
 export async function buildApp() {
     const app = Fastify({ logger: true });
     await app.register(multipart, {
@@ -116,9 +116,9 @@ export async function buildApp() {
             return reply.code(500).send({ detail: msg });
         }
     });
-    if (existsSync(FRONTEND_DIST)) {
+    if (existsSync(WEB_DIST)) {
         await app.register(fastifyStatic, {
-            root: FRONTEND_DIST,
+            root: WEB_DIST,
         });
         app.get("/", async (_req, reply) => reply.sendFile("index.html"));
     }
