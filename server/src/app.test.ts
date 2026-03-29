@@ -8,6 +8,7 @@ import type { FastifyInstance } from "fastify";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const templatePath = join(repoRoot, "resources", "square_template.svg");
+const variableTemplatePath = join(repoRoot, "resources", "square_variable_template.svg");
 
 describe("convertSync", () => {
   const prev = process.env.SFSYMBOL_TEMPLATE_PATH;
@@ -38,6 +39,19 @@ describe("convertSync", () => {
     expect(downloadName.endsWith("_SFSymbol.svg")).toBe(true);
     expect(data.toString("utf-8")).toContain("<svg");
     expect(data.toString("utf-8")).toContain("Symbols");
+  });
+
+  it("uses variable template and hyphen filename for fill-only icon", () => {
+    if (!existsSync(variableTemplatePath)) return;
+    const svg = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="red"/></svg>`,
+      "utf-8"
+    );
+    const { data, downloadName } = convertSync(svg, "myicon.svg");
+    expect(downloadName).toBe("myicon-SFSymbol.svg");
+    const s = data.toString("utf-8");
+    expect(s).toContain('id="Ultralight-S"');
+    expect(s).not.toMatch(/<path[^>]*class="[^"]*SFSymbolsPreviewWireframe/);
   });
 });
 

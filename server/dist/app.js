@@ -7,6 +7,8 @@ import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { runFullConvert } from "./pipeline.js";
 import { defaultSquareTemplatePath } from "./phase5.js";
+import { classifySvgStrokedOrFilled } from "./svgStrokeDetection.js";
+import { mergeFilledIconIntoVariableTemplate } from "./variableTemplateFilled.js";
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const ENV_TEMPLATE = "SFSYMBOL_TEMPLATE_PATH";
 function expandUser(p) {
@@ -50,6 +52,12 @@ export function convertSync(svgBytes, originalFilename) {
         throw new Error("Only .svg uploads are supported.");
     }
     const stem = safeStem(originalFilename);
+    const xml = svgBytes.toString("utf-8");
+    const kind = classifySvgStrokedOrFilled(xml);
+    if (kind === "filled") {
+        const data = mergeFilledIconIntoVariableTemplate(xml);
+        return { data, downloadName: `${stem}-SFSymbol.svg` };
+    }
     const template = resolveSquareTemplate();
     const tmp = mkdtempSync(join(tmpdir(), "svg2sfs_"));
     const inputPath = join(tmp, `${stem}.svg`);
@@ -110,7 +118,10 @@ export async function buildApp() {
             if (msg.includes("exceeds maximum")) {
                 return reply.code(400).send({ detail: msg });
             }
-            if (msg.includes("No SF Symbol") || msg.includes("SFSYMBOL_TEMPLATE_PATH")) {
+            if (msg.includes("No SF Symbol") ||
+                msg.includes("SFSYMBOL_TEMPLATE_PATH") ||
+                msg.includes("No SF Symbol variable template") ||
+                msg.includes("SFSYMBOL_VARIABLE_TEMPLATE_PATH")) {
                 return reply.code(503).send({ detail: msg });
             }
             return reply.code(500).send({ detail: msg });

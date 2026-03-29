@@ -121,14 +121,19 @@ convertBtn.addEventListener('click', async () => {
   try {
     const res = await fetch('/api/convert', { method: 'POST', body });
     if (!res.ok) {
-      let detail = res.statusText;
-      try {
-        const j = (await res.json()) as { detail?: string | { msg?: string } };
-        if (typeof j.detail === 'string') detail = j.detail;
-        else if (j.detail && typeof j.detail === 'object' && 'msg' in j.detail)
-          detail = String((j.detail as { msg: string }).msg);
-      } catch {
-        /* ignore */
+      const raw = await res.text();
+      let detail = res.statusText || `HTTP ${res.status}`;
+      const trimmed = raw.trim();
+      if (trimmed) {
+        try {
+          const j = JSON.parse(trimmed) as { detail?: string | { msg?: string } };
+          if (typeof j.detail === 'string') detail = j.detail;
+          else if (j.detail && typeof j.detail === 'object' && 'msg' in j.detail)
+            detail = String((j.detail as { msg: string }).msg);
+          else detail = trimmed.slice(0, 800);
+        } catch {
+          detail = trimmed.slice(0, 800);
+        }
       }
       showToast(toastErr, 'Conversion failed', 'error', detail);
       return;
