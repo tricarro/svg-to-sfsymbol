@@ -1,17 +1,24 @@
 # Feature cycles index
 
-Active symlink: **`.cursor/features/current/`** → physical folder **`2026-03-27_FilledShapeHandling/`** (FilledShapeHandling — **documented complete 2026-03-28**). Run **`/initialize`** when starting a new feature cycle; that retires `current` and creates a new dated folder.
+**Active work:** [`.cursor/features/current/`](current/) — symlink to the dated folder for the in-progress or just-documented cycle (currently **`2026-03-29_HandlingStrokesAndFills`** until the next **`/initialize`**).
+
+**Related (variable template / weights):** [`.cursor/features/2026-03-27_FilledShapeHandling/`](2026-03-27_FilledShapeHandling/) — filled-shape handling and variable-weight template work (`0_Overview.md` … `4_Review.md` where present).
 
 ---
 
 ## Archived cycles
 
+### 2026-03-29 — HandlingStrokesAndFills
+
+**Folder:** `.cursor/features/2026-03-29_HandlingStrokesAndFills/`  
+**Summary:** Three-way upload routing (`filled` / `stroked-only` / `mixed`); mixed icons outline strokes and union with fills, then merge into `square_variable_template.svg`. Plan + implementation notes + `0_Overview.md` in folder (no PRD / review artifacts for this cycle).
+
 ### 2026-03-27 — archive-python-rename-web-server
 
 **Folder:** `.cursor/features/2026-03-27-archive-python-rename-web-server/`  
-**Summary:** Earlier cycle artifacts (PRD, plan, implementation notes, review) around archiving Python and web/server layout; distinct from FilledShapeHandling.
+**Summary:** Archive Python stack to `.archive/python-legacy`, rename `frontend`→`web`, `api`→`server`; PRD/plan/review artifacts in that folder.
 
 ### 2026-03-27 — FilledShapeHandling
 
 **Folder:** `.cursor/features/2026-03-27_FilledShapeHandling/`  
-**Summary:** Auto-detect stroked vs fill-only SVG on upload; stroked path uses existing pipeline and square template; fill-only path merges into `square_variable_template.svg` (three S slots) with `*-SFSymbol.svg` naming. Artifacts `0_Overview.md`–`4_Review.md` live here and are also reachable via **`current/`** until re-initialized.
+**Summary:** Stroked vs fill-only detection; fill-only merge into `square_variable_template.svg`. **Numbered cycle docs** (`0_Overview.md` … `4_Review.md`) for the variable-weight extension live in this folder.
