@@ -104,3 +104,55 @@ export function classifySvgStrokedOrFilled(xml) {
     const root = svgDocumentElement(doc);
     return walk(root, false) ?? "filled";
 }
+function elementHasVisibleFill(el) {
+    const f = el.getAttribute("fill");
+    if (f !== null) {
+        const fl = f.trim().toLowerCase();
+        if (fl === "none" || fl === "transparent" || fl === "")
+            return false;
+        return true;
+    }
+    const st = parseInlineStyle(el.getAttribute("style"));
+    const fl = st.get("fill")?.trim().toLowerCase() ?? "";
+    if (fl === "none" || fl === "transparent")
+        return false;
+    if (fl)
+        return true;
+    return false;
+}
+/**
+ * Route uploads: fill-only, stroke-only, or both (mixed → variable template after rasterizing to one fill).
+ */
+export function classifySvgRouting(xml) {
+    const doc = parseSvgXml(xml);
+    const root = svgDocumentElement(doc);
+    let anyStroke = false;
+    let anyFill = false;
+    const scan = (el, inDefs) => {
+        const tag = localTag(el);
+        if (tag === "defs") {
+            for (const c of elementChildren(el))
+                scan(c, true);
+            return;
+        }
+        if (inDefs) {
+            for (const c of elementChildren(el))
+                scan(c, true);
+            return;
+        }
+        if (GRAPHICAL_TAGS.has(tag)) {
+            if (elementHasVisibleStroke(el))
+                anyStroke = true;
+            if (elementHasVisibleFill(el))
+                anyFill = true;
+        }
+        for (const c of elementChildren(el))
+            scan(c, false);
+    };
+    scan(root, false);
+    if (anyStroke && anyFill)
+        return "mixed";
+    if (anyStroke)
+        return "stroked-only";
+    return "filled";
+}

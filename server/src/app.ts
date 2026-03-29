@@ -7,7 +7,8 @@ import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { runFullConvert } from "./pipeline.js";
 import { defaultSquareTemplatePath } from "./phase5.js";
-import { classifySvgStrokedOrFilled } from "./svgStrokeDetection.js";
+import { classifySvgRouting } from "./svgStrokeDetection.js";
+import { mixedIconToFillOnlySvg } from "./mixedIconToFilled.js";
 import { mergeFilledIconIntoVariableTemplate } from "./variableTemplateFilled.js";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -60,10 +61,11 @@ export function convertSync(
 
   const stem = safeStem(originalFilename);
   const xml = svgBytes.toString("utf-8");
-  const kind = classifySvgStrokedOrFilled(xml);
+  const route = classifySvgRouting(xml);
 
-  if (kind === "filled") {
-    const data = mergeFilledIconIntoVariableTemplate(xml);
+  if (route === "filled" || route === "mixed") {
+    const iconXml = route === "mixed" ? mixedIconToFillOnlySvg(xml) : xml;
+    const data = mergeFilledIconIntoVariableTemplate(iconXml);
     return { data, downloadName: `${stem}-SFSymbol.svg` };
   }
 

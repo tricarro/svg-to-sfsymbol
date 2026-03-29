@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifySvgStrokedOrFilled, elementHasVisibleStroke } from "./svgStrokeDetection.js";
+import { classifySvgRouting, classifySvgStrokedOrFilled, elementHasVisibleStroke, } from "./svgStrokeDetection.js";
 import { parseSvgString } from "./phase1.js";
 describe("elementHasVisibleStroke", () => {
     it("false when stroke missing", () => {
@@ -43,5 +43,23 @@ describe("classifySvgStrokedOrFilled", () => {
     it("filled for circle with fill only", () => {
         const xml = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="#333"/></svg>`;
         expect(classifySvgStrokedOrFilled(xml)).toBe("filled");
+    });
+});
+describe("classifySvgRouting", () => {
+    it("mixed when stroke and fill on same path", () => {
+        const xml = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 4 L20 20 L4 20 Z" fill="red" stroke="black" stroke-width="2"/></svg>`;
+        expect(classifySvgRouting(xml)).toBe("mixed");
+    });
+    it("stroked-only when stroke and fill none", () => {
+        const xml = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 12h16" stroke="black" stroke-width="2" fill="none"/></svg>`;
+        expect(classifySvgRouting(xml)).toBe("stroked-only");
+    });
+    it("filled when fill only", () => {
+        const xml = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="#333"/></svg>`;
+        expect(classifySvgRouting(xml)).toBe("filled");
+    });
+    it("mixed for separate stroked and filled elements", () => {
+        const xml = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="blue"/><line x1="2" y1="12" x2="22" y2="12" stroke="black" stroke-width="2"/></svg>`;
+        expect(classifySvgRouting(xml)).toBe("mixed");
     });
 });

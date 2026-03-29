@@ -147,7 +147,7 @@ Processing runs in **phases**, each using the previous output. Implementation li
 | **Stroke → fill** | JSTS |
 | **Tests** | Vitest (`cd server && npm test`) |
 | **Programmatic use** | Import `runFullConvert` from [`server/src/pipeline.ts`](server/src/pipeline.ts) (after `npm run build`, use `server/dist/pipeline.js`); no separate CLI |
-| **Upload routing** | `classifySvgStrokedOrFilled` in [`server/src/svgStrokeDetection.ts`](server/src/svgStrokeDetection.ts); filled branch in [`server/src/variableTemplateFilled.ts`](server/src/variableTemplateFilled.ts) |
+| **Upload routing** | `classifySvgRouting` in [`server/src/svgStrokeDetection.ts`](server/src/svgStrokeDetection.ts): **fill-only** and **mixed** (fill+stroke) → [`variableTemplateFilled.ts`](server/src/variableTemplateFilled.ts) (mixed via [`mixedIconToFilled.ts`](server/src/mixedIconToFilled.ts) union); **stroke-only** → square pipeline. `classifySvgStrokedOrFilled` remains for stroke vs non-stroke checks. |
 
 **Resources:** Stroked conversion needs `resources/square_template.svg`. Fill-only conversion needs `resources/square_variable_template.svg`. Some tests use `resources/calendar-today.svg` when present; without it, those tests may skip.
 

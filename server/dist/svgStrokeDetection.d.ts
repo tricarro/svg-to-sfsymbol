@@ -12,3 +12,7 @@ export declare function elementHasVisibleStroke(el: SvgElement): boolean;
  * otherwise "filled" (fill-only / no stroke artwork).
  */
 export declare function classifySvgStrokedOrFilled(xml: string): "stroked" | "filled";
+/**
+ * Route uploads: fill-only, stroke-only, or both (mixed → variable template after rasterizing to one fill).
+ */
+export declare function classifySvgRouting(xml: string): "filled" | "stroked-only" | "mixed";

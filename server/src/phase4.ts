@@ -412,6 +412,180 @@ function coordsToLinearRing(coords: [number, number][]): Coordinate[] {
   return coords.map(([x, y]) => new Coordinate(x, y));
 }
 
+function subpathToFilledPolygon(sp: Subpath): Polygon | null {
+  if (sp.coords.length < 2) return null;
+  const pts: [number, number][] = sp.coords.map(([x, y]) => [x, y]);
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const explicitClose =
+    sp.closed ||
+    (Math.abs(first[0] - last[0]) < COORD_EPS && Math.abs(first[1] - last[1]) < COORD_EPS);
+  if (!explicitClose) {
+    pts.push([first[0], first[1]]);
+  }
+  const f = pts[0];
+  const ln = pts[pts.length - 1];
+  if (Math.abs(f[0] - ln[0]) >= COORD_EPS || Math.abs(f[1] - ln[1]) >= COORD_EPS) {
+    pts.push([f[0], f[1]]);
+  }
+  if (pts.length < 4) return null;
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+function fillSubpathsToGeometry(subpaths: Subpath[]): Geometry | null {
+  const geoms: Geometry[] = [];
+  for (const sp of subpaths) {
+    const poly = subpathToFilledPolygon(sp);
+    if (poly) {
+      const gg = poly as unknown as { isEmpty(): boolean };
+      if (!gg.isEmpty()) geoms.push(poly as unknown as Geometry);
+    }
+  }
+  if (!geoms.length) return null;
+  if (geoms.length === 1) return geoms[0];
+  const gc = geomFact.createGeometryCollection(geoms);
+  return UnaryUnionOp.union(gc) ?? null;
+}
+
+function rectToFillPolygon(el: SvgElement): Polygon | null {
+  const x = parseFloat(el.getAttribute("x") || "0");
+  const y = parseFloat(el.getAttribute("y") || "0");
+  const w = parseFloat(el.getAttribute("width") || "0");
+  const h = parseFloat(el.getAttribute("height") || "0");
+  if (!(w > 0 && h > 0)) return null;
+  const pts: [number, number][] = [
+    [x, y],
+    [x + w, y],
+    [x + w, y + h],
+    [x, y + h],
+    [x, y],
+  ];
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+function circleToFillPolygon(el: SvgElement, segments = 48): Polygon | null {
+  const cx = parseFloat(el.getAttribute("cx") || "0");
+  const cy = parseFloat(el.getAttribute("cy") || "0");
+  const r = parseFloat(el.getAttribute("r") || "0");
+  if (!(r > 0)) return null;
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = (i / segments) * 2 * Math.PI;
+    pts.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+  }
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+function ellipseToFillPolygon(el: SvgElement, segments = 48): Polygon | null {
+  const cx = parseFloat(el.getAttribute("cx") || "0");
+  const cy = parseFloat(el.getAttribute("cy") || "0");
+  const rx = parseFloat(el.getAttribute("rx") || "0");
+  const ry = parseFloat(el.getAttribute("ry") || "0");
+  if (!(rx > 0 && ry > 0)) return null;
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = (i / segments) * 2 * Math.PI;
+    pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
+  }
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * JSTS unary union of geometries (empty inputs filtered). For mixed fill+stroke merging.
+ */
+export function unionJtsGeometries(geoms: Geometry[]): Geometry | null {
+  const nonempty = geoms.filter((g) => {
+    const gg = g as unknown as { isEmpty(): boolean };
+    return gg && !gg.isEmpty();
+  });
+  if (!nonempty.length) return null;
+  if (nonempty.length === 1) return nonempty[0];
+  const gc = geomFact.createGeometryCollection(nonempty);
+  return UnaryUnionOp.union(gc) ?? null;
+}
+
+export function jtsGeometryToSvgPathD(geom: Geometry): { d: string; evenodd: boolean } {
+  return geometryToPathD(geom);
+}
+
+export function strokeElementToOutlineGeometry(el: SvgElement, flatness: number): Geometry | null {
+  if (!elementIsStroked(el) || hasDasharray(el)) return null;
+  const tag = localTag(el);
+  if (tag === "path") {
+    const d = el.getAttribute("d");
+    if (!d) return null;
+    const subpaths = flattenPathToSubpaths(d, flatness);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  if (tag === "line") {
+    const subpaths = lineSubpaths(el);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  if (tag === "polyline") {
+    const subpaths = polylineSubpaths(el);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  if (tag === "polygon") {
+    const subpaths = polygonSubpaths(el);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  return null;
+}
+
+export function fillElementToGeometry(el: SvgElement, flatness: number): Geometry | null {
+  if (!visibleFill(el)) return null;
+  const tag = localTag(el);
+  if (tag === "path") {
+    const d = el.getAttribute("d");
+    if (!d) return null;
+    const subpaths = flattenPathToSubpaths(d, flatness);
+    return fillSubpathsToGeometry(subpaths);
+  }
+  if (tag === "polygon") {
+    return fillSubpathsToGeometry(polygonSubpaths(el));
+  }
+  if (tag === "polyline") {
+    return fillSubpathsToGeometry(polylineSubpaths(el));
+  }
+  if (tag === "rect") {
+    const p = rectToFillPolygon(el);
+    return p as unknown as Geometry | null;
+  }
+  if (tag === "circle") {
+    const p = circleToFillPolygon(el);
+    return p as unknown as Geometry | null;
+  }
+  if (tag === "ellipse") {
+    const p = ellipseToFillPolygon(el);
+    return p as unknown as Geometry | null;
+  }
+  return null;
+}
+
 function bufferSubpaths(
   subpaths: Subpath[],
   halfW: number,
@@ -459,18 +633,26 @@ function bufferSubpaths(
   return UnaryUnionOp.union(gc) ?? null;
 }
 
-function outlineFromSubpaths(
+function outlineGeometryFromSubpaths(
   subpaths: Subpath[],
   el: SvgElement,
   flatness: number
-): { d: string; evenodd: boolean } | null {
+): Geometry | null {
   const sw = strokeWidthPx(el);
   if (sw <= 0) return null;
   const half = sw / 2;
   const cap = capStyle(el);
   const join = joinStyle(el);
   const mitre = mitreLimit(el);
-  const g = bufferSubpaths(subpaths, half, cap, join, mitre, 8);
+  return bufferSubpaths(subpaths, half, cap, join, mitre, 8);
+}
+
+function outlineFromSubpaths(
+  subpaths: Subpath[],
+  el: SvgElement,
+  flatness: number
+): { d: string; evenodd: boolean } | null {
+  const g = outlineGeometryFromSubpaths(subpaths, el, flatness);
   if (!g) return null;
   return geometryToPathD(g);
 }
