@@ -28,15 +28,14 @@ describe("mixedIconToStrokedSvg", () => {
         expect(out).toContain('fill="none"');
         expect(out).toMatch(/fill="none"[^>]*stroke-linecap="round"/);
     });
-    it("strips fill from stroke+fill path and adds boundary stroke", () => {
+    it("retains fill and stroke on stroke+fill shape without extra boundary path", () => {
         const xml = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
             `<rect x="4" y="4" width="8" height="8" fill="yellow" stroke="black" stroke-width="2"/>` +
             `</svg>`;
         const out = mixedIconToStrokedSvg(xml);
         expect(out).toContain('stroke="black"');
         expect(out).toContain('stroke-width="2"');
-        expect(out.match(/<rect[^>]*>/g)?.[0]).not.toMatch(/fill="yellow"/);
-        const paths = out.match(/<path[^>]*>/g) ?? [];
-        expect(paths.some((p) => p.includes('fill="none"') && p.includes("stroke-linecap"))).toBe(true);
+        expect(out.match(/<rect[^>]*>/g)?.[0]).toMatch(/fill="yellow"/);
+        expect(out.match(/<path\b/g) ?? []).toHaveLength(0);
     });
 });

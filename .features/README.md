@@ -9,7 +9,7 @@ Active work in progress: **`.features/current/`** (symlink to dated folder when 
 ### 2026-04-06_Modifying_Mixed_Icon_Process
 
 **Folder:** `.features/2026-04-06_Modifying_Mixed_Icon_Process/`  
-**Summary:** Mixed stroke+fill SVGs now preprocess fills into strokes and run the square SF Symbol pipeline instead of the variable template; circle/ellipse fill geometry fixed in phase4.
+**Summary:** **Failed cycle.** Explored retaining native fill on stroke+fill shapes in `mixedIconToStrokedSvg` (PRD/plan/implementation archived). Implementation was reverted; repo behavior remains strip-fill plus boundary path for that case. No `4_Review.md`.
 
 ### 2026-03-29_HandlingStrokesAndFills
 

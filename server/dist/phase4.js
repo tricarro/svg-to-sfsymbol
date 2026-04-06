@@ -517,9 +517,16 @@ function circleToFillPolygon(el, segments = 48) {
     if (!(r > 0))
         return null;
     const pts = [];
-    for (let i = 0; i <= segments; i++) {
+    for (let i = 0; i < segments; i++) {
         const t = (i / segments) * 2 * Math.PI;
         pts.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+    }
+    if (pts.length < 3)
+        return null;
+    const f = pts[0];
+    const l = pts[pts.length - 1];
+    if (Math.abs(f[0] - l[0]) > COORD_EPS || Math.abs(f[1] - l[1]) > COORD_EPS) {
+        pts.push([f[0], f[1]]);
     }
     try {
         const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
@@ -537,9 +544,16 @@ function ellipseToFillPolygon(el, segments = 48) {
     if (!(rx > 0 && ry > 0))
         return null;
     const pts = [];
-    for (let i = 0; i <= segments; i++) {
+    for (let i = 0; i < segments; i++) {
         const t = (i / segments) * 2 * Math.PI;
         pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
+    }
+    if (pts.length < 3)
+        return null;
+    const f = pts[0];
+    const l = pts[pts.length - 1];
+    if (Math.abs(f[0] - l[0]) > COORD_EPS || Math.abs(f[1] - l[1]) > COORD_EPS) {
+        pts.push([f[0], f[1]]);
     }
     try {
         const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
