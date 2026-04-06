@@ -44,6 +44,19 @@ describe("convertSync", () => {
         expect(s).toContain('id="Ultralight-S"');
         expect(s).not.toMatch(/<path[^>]*class="[^"]*SFSymbolsPreviewWireframe/);
     });
+    it("uses square template and underscore filename for mixed stroke+fill icon", () => {
+        if (!existsSync(templatePath))
+            return;
+        const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">` +
+            `<path d="M4 12h16" stroke="black" stroke-width="2" fill="none"/>` +
+            `<circle cx="12" cy="12" r="5" fill="red"/>` +
+            `</svg>`, "utf-8");
+        const { data, downloadName } = convertSync(svg, "mixed.svg");
+        expect(downloadName).toBe("mixed_SFSymbol.svg");
+        const s = data.toString("utf-8");
+        expect(s).toContain("Symbols");
+        expect(s).toContain("<svg");
+    });
 });
 describe("POST /api/convert", () => {
     let app;

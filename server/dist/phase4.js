@@ -309,6 +309,71 @@ function ringToD(coords) {
     parts.push("Z");
     return parts.join(" ");
 }
+function coordinatesToOpenPathD(coords) {
+    if (coords.length < 2)
+        return "";
+    const parts = [`M ${coords[0].x.toPrecision(6)},${coords[0].y.toPrecision(6)}`];
+    for (let i = 1; i < coords.length; i++) {
+        parts.push(`L ${coords[i].x.toPrecision(6)},${coords[i].y.toPrecision(6)}`);
+    }
+    return parts.join(" ");
+}
+function coordinatesToClosedPathDFromCoords(coords) {
+    if (coords.length < 2)
+        return "";
+    let c = coords.map((p) => [p.x, p.y]);
+    const last = c[c.length - 1];
+    const first = c[0];
+    if (c.length >= 2 &&
+        Math.abs(first[0] - last[0]) < COORD_EPS &&
+        Math.abs(first[1] - last[1]) < COORD_EPS) {
+        c = c.slice(0, -1);
+    }
+    if (c.length < 2)
+        return "";
+    const parts = [`M ${c[0][0].toPrecision(6)},${c[0][1].toPrecision(6)}`];
+    for (let i = 1; i < c.length; i++) {
+        parts.push(`L ${c[i][0].toPrecision(6)},${c[i][1].toPrecision(6)}`);
+    }
+    parts.push("Z");
+    return parts.join(" ");
+}
+/**
+ * Serialize LineString / LinearRing / MultiLineString / line-only GeometryCollection to SVG path d.
+ * Used for polygon fill boundaries (getBoundary) in mixed-icon preprocessing.
+ */
+export function jtsLinealGeometryToPathD(geom) {
+    const g = geom;
+    if (g.isEmpty())
+        return "";
+    const gt = g.getGeometryType();
+    if (gt === "LineString" || gt === "LinearRing") {
+        const coords = g.getCoordinates();
+        if (gt === "LinearRing" || (typeof g.isClosed === "function" && g.isClosed())) {
+            return coordinatesToClosedPathDFromCoords(coords);
+        }
+        return coordinatesToOpenPathD(coords);
+    }
+    if (gt === "MultiLineString") {
+        const chunks = [];
+        for (let i = 0; i < g.getNumGeometries(); i++) {
+            const part = jtsLinealGeometryToPathD(g.getGeometryN(i));
+            if (part)
+                chunks.push(part);
+        }
+        return chunks.join(" ").trim();
+    }
+    if (geom instanceof GeometryCollection) {
+        const chunks = [];
+        for (let i = 0; i < g.getNumGeometries(); i++) {
+            const part = jtsLinealGeometryToPathD(g.getGeometryN(i));
+            if (part)
+                chunks.push(part);
+        }
+        return chunks.join(" ").trim();
+    }
+    return "";
+}
 function polygonToPathD(poly) {
     const shell = poly.getExteriorRing();
     const coords = shell.getCoordinates();

@@ -12,7 +12,17 @@ export declare function elementHasVisibleStroke(el: SvgElement): boolean;
  * otherwise "filled" (fill-only / no stroke artwork).
  */
 export declare function classifySvgStrokedOrFilled(xml: string): "stroked" | "filled";
+export declare function elementHasVisibleFill(el: SvgElement): boolean;
 /**
- * Route uploads: fill-only, stroke-only, or both (mixed → variable template after rasterizing to one fill).
+ * Max stroke-width among visibly stroked graphical elements (missing width counts as 1),
+ * and stroke color from the first such element in document order. Used when preprocessing
+ * mixed icons before the square pipeline.
+ */
+export declare function representativeStrokeStyleForMixedPreprocess(root: SvgElement): {
+    width: number;
+    color: string;
+};
+/**
+ * Route uploads: fill-only, stroke-only, or both (mixed → square pipeline after fill-to-stroke preprocess).
  */
 export declare function classifySvgRouting(xml: string): "filled" | "stroked-only" | "mixed";

@@ -21,9 +21,9 @@ The project is a **small web app** (upload → convert → download) backed by a
 
 ## Overview
 
-**Input:** One SVG icon. The server **detects** whether the artwork uses a **visible stroke** (presentation attributes or simple inline `style`) on paths, basic shapes, or text. **Stroked** inputs go through the full pipeline into the **square** template; **fill-only** inputs are scaled to a 112×112 frame and merged into Apple’s **variable** square template (`Ultralight-S`, `Regular-S`, `Black-S` only).
+**Input:** One SVG icon. The server **detects** whether the artwork uses a **visible stroke** (presentation attributes or simple inline `style`) on paths, basic shapes, or text. **Stroke-only** and **mixed** (stroke + fill on the same file) inputs go through the full pipeline into the **square** template; mixed icons are preprocessed so **fill regions become stroked boundaries** (width/color derived from existing strokes) before phase 1. **Fill-only** inputs are scaled to a 112×112 frame and merged into Apple’s **variable** square template (`Ultralight-S`, `Regular-S`, `Black-S` only).
 
-**Output:** Either the full **square** SF Symbol template (stroked path) or the **variable** template SVG (filled path), as a download.
+**Output:** Either the full **square** SF Symbol template (stroked path, including preprocessed mixed icons) or the **variable** template SVG (filled path), as a download.
 
 **Why it exists:** Building SF Symbol sets by hand (every weight × size, stroke-to-fill, template placement) is slow and error-prone. This tool automates the mechanical steps so you can focus on the icon design.
 
@@ -34,13 +34,13 @@ The project is a **small web app** (upload → convert → download) backed by a
 1. **Install and run the stack** (see [Local development](#local-development) below): **server** on port `3000` (default for the Vite proxy) and the **web** dev server (usually port `5173`).
 2. **Open the app** in a browser at the URL Vite prints (e.g. `http://localhost:5173`).
 3. **Choose file** and pick a `.svg` (stroked or fill-only artwork).
-4. Click **Convert**. When processing finishes, the **SF Symbol template SVG** download should start automatically. **Stroked** files download as `{name}_SFSymbol.svg`; **fill-only** files as `{name}-SFSymbol.svg` (variable template).
+4. Click **Convert**. When processing finishes, the **SF Symbol template SVG** download should start automatically. **Stroke-only and mixed** files download as `{name}_SFSymbol.svg`; **fill-only** files as `{name}-SFSymbol.svg` (variable template).
 5. If something fails, check the on-screen error message—common issues include invalid SVG or a missing template file (see [Template file](#template-file)).
 
 **Input tips**
 
 - Prefer **simple** paths; heavy effects or exotic SVG features may not convert cleanly.
-- **Detection** is heuristic (presentation attributes and basic inline `style` only); `<use>`, hidden strokes, or complex CSS may misclassify. Mixed stroke+fill icons are not a separate mode yet.
+- **Detection** is heuristic (presentation attributes and basic inline `style` only); `<use>`, hidden strokes, or complex CSS may misclassify. **Mixed** stroke+fill icons use the square template after fill-to-stroke preprocessing (group transforms and inherited paint are still limited, same as other heuristics).
 - The root `<svg>` needs a **`viewBox`** or numeric **`width`/`height`** (not percentages). Otherwise conversion responds with a clear validation error.
 
 ---
@@ -147,7 +147,7 @@ Processing runs in **phases**, each using the previous output. Implementation li
 | **Stroke → fill** | JSTS |
 | **Tests** | Vitest (`cd server && npm test`) |
 | **Programmatic use** | Import `runFullConvert` from [`server/src/pipeline.ts`](server/src/pipeline.ts) (after `npm run build`, use `server/dist/pipeline.js`); no separate CLI |
-| **Upload routing** | `classifySvgRouting` in [`server/src/svgStrokeDetection.ts`](server/src/svgStrokeDetection.ts): **fill-only** and **mixed** (fill+stroke) → [`variableTemplateFilled.ts`](server/src/variableTemplateFilled.ts) (mixed via [`mixedIconToFilled.ts`](server/src/mixedIconToFilled.ts) union); **stroke-only** → square pipeline. `classifySvgStrokedOrFilled` remains for stroke vs non-stroke checks. |
+| **Upload routing** | `classifySvgRouting` in [`server/src/svgStrokeDetection.ts`](server/src/svgStrokeDetection.ts): **fill-only** → [`variableTemplateFilled.ts`](server/src/variableTemplateFilled.ts); **mixed** → [`mixedIconToStrokedSvg.ts`](server/src/mixedIconToStrokedSvg.ts) then square pipeline; **stroke-only** → square pipeline. [`mixedIconToFilled.ts`](server/src/mixedIconToFilled.ts) remains for tests / reuse (union-to-fill), not used for HTTP conversion. `classifySvgStrokedOrFilled` remains for stroke vs non-stroke checks. |
 
 **Resources:** Stroked conversion needs `resources/square_template.svg`. Fill-only conversion needs `resources/square_variable_template.svg`. Some tests use `resources/calendar-today.svg` when present; without it, those tests may skip.
 

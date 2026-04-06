@@ -2,6 +2,11 @@ import type { PathLike } from "node:fs";
 import Geometry from "jsts/org/locationtech/jts/geom/Geometry.js";
 import { type SvgElement } from "./xml.js";
 /**
+ * Serialize LineString / LinearRing / MultiLineString / line-only GeometryCollection to SVG path d.
+ * Used for polygon fill boundaries (getBoundary) in mixed-icon preprocessing.
+ */
+export declare function jtsLinealGeometryToPathD(geom: Geometry): string;
+/**
  * JSTS unary union of geometries (empty inputs filtered). For mixed fill+stroke merging.
  */
 export declare function unionJtsGeometries(geoms: Geometry[]): Geometry | null;

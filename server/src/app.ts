@@ -8,7 +8,7 @@ import fastifyStatic from "@fastify/static";
 import { runFullConvert } from "./pipeline.js";
 import { defaultSquareTemplatePath } from "./phase5.js";
 import { classifySvgRouting } from "./svgStrokeDetection.js";
-import { mixedIconToFillOnlySvg } from "./mixedIconToFilled.js";
+import { mixedIconToStrokedSvg } from "./mixedIconToStrokedSvg.js";
 import { mergeFilledIconIntoVariableTemplate } from "./variableTemplateFilled.js";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -63,16 +63,17 @@ export function convertSync(
   const xml = svgBytes.toString("utf-8");
   const route = classifySvgRouting(xml);
 
-  if (route === "filled" || route === "mixed") {
-    const iconXml = route === "mixed" ? mixedIconToFillOnlySvg(xml) : xml;
-    const data = mergeFilledIconIntoVariableTemplate(iconXml);
+  if (route === "filled") {
+    const data = mergeFilledIconIntoVariableTemplate(xml);
     return { data, downloadName: `${stem}-SFSymbol.svg` };
   }
 
   const template = resolveSquareTemplate();
   const tmp = mkdtempSync(join(tmpdir(), "svg2sfs_"));
   const inputPath = join(tmp, `${stem}.svg`);
-  writeFileSync(inputPath, svgBytes);
+  const inputBytes =
+    route === "mixed" ? Buffer.from(mixedIconToStrokedSvg(xml), "utf-8") : svgBytes;
+  writeFileSync(inputPath, inputBytes);
   const outSvg = join(tmp, `${stem}_SFSymbol.svg`);
   const result = runFullConvert(inputPath, tmp, {
     phase5Template: template,
