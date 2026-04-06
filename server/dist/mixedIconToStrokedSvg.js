@@ -1,14 +1,15 @@
 /**
  * Mixed (fill + stroke) icons → SVG for the square SF Symbol pipeline.
- * Elements with only fill (no visible stroke) become stroked boundary paths using representative
- * stroke width/color from stroked elements in the document. Elements with both stroke and fill pass
- * through with native fill and stroke unchanged.
+ * Fill-only shapes become a stroked boundary path (representative stroke). Stroke-only
+ * shapes pass through. Stroke+fill shapes emit three layers in order: fill-only clone,
+ * fill-boundary path stroked with representative width/color, then stroke-only clone.
+ * Text with stroke+fill skips the synthetic boundary path (fill-only + stroke-only only).
  * Limitations: same as mixedIconToFilled (no group/transform bake, heuristic paint only).
  */
 import { XMLSerializer } from "@xmldom/xmldom";
 import { readViewBox } from "./phase1.js";
 import { fillElementToGeometry, jtsLinealGeometryToPathD } from "./phase4.js";
-import { elementChildren, localTag, parseSvgXml, svgDocumentElement, } from "./xml.js";
+import { deepCloneElement, elementChildren, localTag, parseSvgXml, svgDocumentElement, } from "./xml.js";
 import { elementHasVisibleFill, elementHasVisibleStroke, representativeStrokeStyleForMixedPreprocess, } from "./svgStrokeDetection.js";
 const GRAPHICAL = new Set([
     "path",
@@ -44,6 +45,63 @@ function collectGraphicalElements(root) {
 }
 function escapeSvgAttr(s) {
     return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+function stripFillFromElement(el) {
+    el.removeAttribute("fill");
+    el.removeAttribute("fill-rule");
+    el.removeAttribute("fill-opacity");
+    const style = el.getAttribute("style");
+    if (!style)
+        return;
+    const kept = [];
+    for (const part of style.split(";")) {
+        const idx = part.indexOf(":");
+        if (idx === -1)
+            continue;
+        const k = part.slice(0, idx).trim().toLowerCase();
+        if (k === "fill" || k === "fill-rule" || k === "fill-opacity")
+            continue;
+        const v = part.trim();
+        if (v)
+            kept.push(v);
+    }
+    if (kept.length)
+        el.setAttribute("style", kept.join(";"));
+    else
+        el.removeAttribute("style");
+}
+function stripStrokeFromElement(el) {
+    for (const k of [
+        "stroke",
+        "stroke-width",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
+        "stroke-dasharray",
+        "stroke-dashoffset",
+        "stroke-opacity",
+    ]) {
+        el.removeAttribute(k);
+    }
+    const style = el.getAttribute("style");
+    if (!style)
+        return;
+    const kept = [];
+    for (const part of style.split(";")) {
+        const idx = part.indexOf(":");
+        if (idx === -1)
+            continue;
+        const k = part.slice(0, idx).trim().toLowerCase();
+        if (k.startsWith("stroke"))
+            continue;
+        const v = part.trim();
+        if (v)
+            kept.push(v);
+    }
+    if (kept.length)
+        el.setAttribute("style", kept.join(";"));
+    else
+        el.removeAttribute("style");
 }
 function serializeElement(el) {
     return new XMLSerializer().serializeToString(el);
@@ -86,7 +144,15 @@ export function mixedIconToStrokedSvg(xml, opts) {
             chunks.push(fillBoundaryToStrokedPathMarkup(el, flatness, repW, repColor));
         }
         else if (hasS && hasF) {
-            chunks.push(serializeElement(el));
+            const fillOnly = deepCloneElement(el);
+            stripStrokeFromElement(fillOnly);
+            chunks.push(serializeElement(fillOnly));
+            if (localTag(el) !== "text") {
+                chunks.push(fillBoundaryToStrokedPathMarkup(el, flatness, repW, repColor));
+            }
+            const strokeOnly = deepCloneElement(el);
+            stripFillFromElement(strokeOnly);
+            chunks.push(serializeElement(strokeOnly));
         }
         else {
             chunks.push(serializeElement(el));

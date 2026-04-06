@@ -1,6 +1,9 @@
 /**
- * Mixed (fill + stroke) icons → stroked-only SVG for the square SF Symbol pipeline.
- * Fills become stroked boundaries using representative stroke width/color from existing strokes.
+ * Mixed (fill + stroke) icons → SVG for the square SF Symbol pipeline.
+ * Fill-only shapes become a stroked boundary path (representative stroke). Stroke-only
+ * shapes pass through. Stroke+fill shapes emit three layers in order: fill-only clone,
+ * fill-boundary path stroked with representative width/color, then stroke-only clone.
+ * Text with stroke+fill skips the synthetic boundary path (fill-only + stroke-only only).
  * Limitations: same as mixedIconToFilled (no group/transform bake, heuristic paint only).
  */
 import { XMLSerializer } from "@xmldom/xmldom";
@@ -74,6 +77,34 @@ function stripFillFromElement(el: SvgElement): void {
   else el.removeAttribute("style");
 }
 
+function stripStrokeFromElement(el: SvgElement): void {
+  for (const k of [
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-opacity",
+  ]) {
+    el.removeAttribute(k);
+  }
+  const style = el.getAttribute("style");
+  if (!style) return;
+  const kept: string[] = [];
+  for (const part of style.split(";")) {
+    const idx = part.indexOf(":");
+    if (idx === -1) continue;
+    const k = part.slice(0, idx).trim().toLowerCase();
+    if (k.startsWith("stroke")) continue;
+    const v = part.trim();
+    if (v) kept.push(v);
+  }
+  if (kept.length) el.setAttribute("style", kept.join(";"));
+  else el.removeAttribute("style");
+}
+
 function serializeElement(el: SvgElement): string {
   return new XMLSerializer().serializeToString(el);
 }
@@ -104,7 +135,7 @@ function fillBoundaryToStrokedPathMarkup(
     throw new Error("Mixed icon fill-to-stroke: boundary could not be serialized to a path.");
   }
   return (
-    `<path fill="none" stroke="${escapeSvgAttr(strokeColor)}" stroke-width="${strokeWidth}" ` +
+    `<path fill="${escapeSvgAttr(strokeColor)}" stroke="${escapeSvgAttr(strokeColor)}" stroke-width="${strokeWidth}" ` +
     `stroke-linecap="round" stroke-linejoin="round" d="${escapeSvgAttr(d)}"/>`
   );
 }
@@ -126,12 +157,15 @@ export function mixedIconToStrokedSvg(xml: string, opts?: { flatness?: number })
     } else if (!hasS && hasF) {
       chunks.push(fillBoundaryToStrokedPathMarkup(el, flatness, repW, repColor));
     } else if (hasS && hasF) {
-      const clone = deepCloneElement(el);
-      stripFillFromElement(clone);
-      chunks.push(serializeElement(clone));
+      const fillOnly = deepCloneElement(el);
+      stripStrokeFromElement(fillOnly);
+      chunks.push(serializeElement(fillOnly));
       if (localTag(el) !== "text") {
         chunks.push(fillBoundaryToStrokedPathMarkup(el, flatness, repW, repColor));
       }
+      const strokeOnly = deepCloneElement(el);
+      stripFillFromElement(strokeOnly);
+      chunks.push(serializeElement(strokeOnly));
     } else {
       chunks.push(serializeElement(el));
     }
