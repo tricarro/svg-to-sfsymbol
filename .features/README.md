@@ -1,10 +1,15 @@
 # Feature cycles index
 
-Active work in progress: **`.features/current/`** (symlink to dated folder when set)
+Active work in progress: **none** (after **document**, `.features/current` is removed; the next cycle recreates it via **ideate** or bootstrap)
 
 ---
 
 ## Archived cycles
+
+### 2026-04-08_Mixed_icon_terminal_SVG_test
+
+**Folder:** `.features/2026-04-08_Mixed_icon_terminal_SVG_test/`  
+**Summary:** Standalone Node + Paper.js CLI under `tests/mixedIcon` duplicates filled paths, strokes copies, normalizes stroke width, writes one SVG; isolated from the main converter. No `4_Review.md`.
 
 ### 2026-04-06_Modifying_Mixed_Icon_Process
 
