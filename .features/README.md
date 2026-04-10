@@ -6,6 +6,11 @@ Active work in progress: **none** (after **document**, `.features/current` is re
 
 ## Archived cycles
 
+### 2026-04-10_Build_pipeline_consolidation
+
+**Folder:** `.features/2026-04-10_Build_pipeline_consolidation/`  
+**Summary:** Added repo-root **`build-pipeline`** package as a self-contained duplicate of the conversion pipeline (step-based module names, own `resources/`, Vitest). Server still uses `server/src`; root workspaces and README document both entrypoints. No **`4_Review.md`**.
+
 ### 2026-04-08_Mixed_icon_terminal_SVG_test
 
 **Folder:** `.features/2026-04-08_Mixed_icon_terminal_SVG_test/`  
