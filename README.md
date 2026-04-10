@@ -14,8 +14,11 @@ The project is a **small web app** (upload → convert → download) backed by a
 |------|------|
 | [`web/`](web/) | Vite + TypeScript browser UI |
 | [`server/`](server/) | Fastify API, SVG pipeline (`server/src/`), Vitest tests |
+| [`build-pipeline/`](build-pipeline/) | Duplicate, self-contained pipeline package (descriptive step names; no Fastify). Templates under `build-pipeline/resources/`. See [`build-pipeline/README.md`](build-pipeline/README.md). |
 | [`resources/`](resources/) | SF Symbol templates: `square_template.svg` (stroked path, phase 5) and `square_variable_template.svg` (filled path, three S slots) |
 | [`.archive/python-legacy/`](.archive/python-legacy/) | Archived Python package and pytest suite (not used for day-to-day work) |
+
+Root [`package.json`](package.json) defines npm workspaces (`server`, `build-pipeline`). Run **`npm test`** from the repository root to execute Vitest in both packages.
 
 ---
 
@@ -71,6 +74,14 @@ npm start
 ```bash
 cd server && npm test
 ```
+
+**Tests (build-pipeline package):**
+
+```bash
+cd build-pipeline && npm test
+```
+
+From the **repository root** (after `npm install` once at root): `npm test` runs both workspaces.
 
 **Web** (second terminal):
 
@@ -146,7 +157,7 @@ Processing runs in **phases**, each using the previous output. Implementation li
 | **Paths** | `svgpath` |
 | **Stroke → fill** | JSTS |
 | **Tests** | Vitest (`cd server && npm test`) |
-| **Programmatic use** | Import `runFullConvert` from [`server/src/pipeline.ts`](server/src/pipeline.ts) (after `npm run build`, use `server/dist/pipeline.js`); no separate CLI |
+| **Programmatic use** | **Server (current app):** import `runFullConvert` from [`server/src/pipeline.ts`](server/src/pipeline.ts) (after `npm run build`, use `server/dist/pipeline.js`). **Standalone package:** import from [`build-pipeline`](build-pipeline/) after `cd build-pipeline && npm run build` — same overall flow, but option names use step vocabulary (`sizeVariantsOnly`, `skipStrokeWidths`, `squareTemplatePath`, `mergedSvgOutputPath`, etc.); see `build-pipeline/src/runFullConvert.ts`. No separate CLI. |
 | **Upload routing** | `classifySvgRouting` in [`server/src/svgStrokeDetection.ts`](server/src/svgStrokeDetection.ts): **fill-only** → [`variableTemplateFilled.ts`](server/src/variableTemplateFilled.ts); **mixed** → [`mixedIconToStrokedSvg.ts`](server/src/mixedIconToStrokedSvg.ts) then square pipeline; **stroke-only** → square pipeline. [`mixedIconToFilled.ts`](server/src/mixedIconToFilled.ts) remains for tests / reuse (union-to-fill), not used for HTTP conversion. `classifySvgStrokedOrFilled` remains for stroke vs non-stroke checks. |
 
 **Resources:** Stroked conversion needs `resources/square_template.svg`. Fill-only conversion needs `resources/square_variable_template.svg`. Some tests use `resources/calendar-today.svg` when present; without it, those tests may skip.

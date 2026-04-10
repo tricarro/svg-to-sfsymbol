@@ -3,10 +3,10 @@ import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildApp, convertSync } from "./app.js";
-import { defaultSquareTemplatePath } from "./phase5.js";
+import { defaultSquareTemplatePath } from "build-pipeline";
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const templatePath = join(repoRoot, "resources", "square_template.svg");
-const variableTemplatePath = join(repoRoot, "resources", "square_variable_template.svg");
+const templatePath = join(repoRoot, "build-pipeline", "resources", "square_template.svg");
+const variableTemplatePath = join(repoRoot, "build-pipeline", "resources", "square_variable_template.svg");
 describe("convertSync", () => {
     const prev = process.env.SFSYMBOL_TEMPLATE_PATH;
     beforeAll(() => {

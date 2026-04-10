@@ -1,0 +1,925 @@
+/**
+ * Stroke → filled outline via JSTS buffer (Shapely/GEOS analogue).
+ */
+import { readdirSync, writeFileSync } from "node:fs";
+import type { PathLike } from "node:fs";
+import { join } from "node:path";
+import SvgPath from "svgpath";
+import BufferOp from "jsts/org/locationtech/jts/operation/buffer/BufferOp.js";
+import BufferParameters from "jsts/org/locationtech/jts/operation/buffer/BufferParameters.js";
+import Coordinate from "jsts/org/locationtech/jts/geom/Coordinate.js";
+import GeometryFactory from "jsts/org/locationtech/jts/geom/GeometryFactory.js";
+import Polygon from "jsts/org/locationtech/jts/geom/Polygon.js";
+import MultiPolygon from "jsts/org/locationtech/jts/geom/MultiPolygon.js";
+import GeometryCollection from "jsts/org/locationtech/jts/geom/GeometryCollection.js";
+import Geometry from "jsts/org/locationtech/jts/geom/Geometry.js";
+import UnaryUnionOp from "jsts/org/locationtech/jts/operation/union/UnaryUnionOp.js";
+import { elementIsStroked, parseWeightStem } from "./strokeWidths.js";
+import {
+  elementChildren,
+  elementToBytes,
+  localTag,
+  parseSvgFile,
+  SVG_NS,
+  svgDocumentElement,
+  type SvgDocument,
+  type SvgElement,
+} from "../svg/xml.js";
+
+const COORD_EPS = 1e-7;
+const _NUM_RE = /[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?/g;
+
+const geomFact = new GeometryFactory();
+
+function dist(x0: number, y0: number, x1: number, y1: number): number {
+  return Math.hypot(x1 - x0, y1 - y0);
+}
+
+function sampleCubic(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  x3: number,
+  y3: number,
+  flatness: number
+): [number, number][] {
+  const ln = Math.max(
+    1e-6,
+    dist(x0, y0, x1, y1) + dist(x1, y1, x2, y2) + dist(x2, y2, x3, y3)
+  );
+  const n = Math.max(4, Math.min(256, Math.floor(ln / flatness) + 1));
+  const out: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const t = n > 1 ? i / (n - 1) : 0;
+    const u = 1 - t;
+    const x = u ** 3 * x0 + 3 * u ** 2 * t * x1 + 3 * u * t ** 2 * x2 + t ** 3 * x3;
+    const y = u ** 3 * y0 + 3 * u ** 2 * t * y1 + 3 * u * t ** 2 * y2 + t ** 3 * y3;
+    out.push([x, y]);
+  }
+  return out;
+}
+
+function sampleQuad(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  flatness: number
+): [number, number][] {
+  const ln = Math.max(1e-6, dist(x0, y0, x1, y1) + dist(x1, y1, x2, y2));
+  const n = Math.max(4, Math.min(256, Math.floor(ln / flatness) + 1));
+  const out: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const t = n > 1 ? i / (n - 1) : 0;
+    const u = 1 - t;
+    const x = u * u * x0 + 2 * u * t * x1 + t * t * x2;
+    const y = u * u * y0 + 2 * u * t * y1 + t * t * y2;
+    out.push([x, y]);
+  }
+  return out;
+}
+
+type Subpath = { coords: [number, number][]; closed: boolean };
+
+function dedupeAppend(pts: [number, number][], x: number, y: number): void {
+  const last = pts[pts.length - 1];
+  if (last && Math.abs(last[0] - x) < COORD_EPS && Math.abs(last[1] - y) < COORD_EPS) {
+    return;
+  }
+  pts.push([x, y]);
+}
+
+function flattenPathToSubpaths(d: string, flatness: number): Subpath[] {
+  if (!d || !d.trim()) return [];
+  let p: InstanceType<typeof SvgPath>;
+  try {
+    p = new SvgPath(d).abs().unshort().unarc();
+  } catch {
+    return [];
+  }
+  const segs = (p as unknown as { segments: (string | number)[][] }).segments;
+  const subpaths: Subpath[] = [];
+  let current: [number, number][] = [];
+  let closed = false;
+  let cx = 0;
+  let cy = 0;
+  let subStart: [number, number] = [0, 0];
+
+  const flush = () => {
+    if (current.length >= 2) {
+      subpaths.push({ coords: [...current], closed });
+    }
+    current = [];
+    closed = false;
+  };
+
+  for (const s of segs) {
+    const cmd = String(s[0]);
+    if (cmd === "M" || cmd === "m") {
+      flush();
+      cx = Number(s[1]);
+      cy = Number(s[2]);
+      dedupeAppend(current, cx, cy);
+      subStart = [cx, cy];
+    } else if (cmd === "L" || cmd === "l") {
+      cx = Number(s[s.length - 2]);
+      cy = Number(s[s.length - 1]);
+      dedupeAppend(current, cx, cy);
+    } else if (cmd === "H" || cmd === "h") {
+      cx = Number(s[1]);
+      dedupeAppend(current, cx, cy);
+    } else if (cmd === "V" || cmd === "v") {
+      cy = Number(s[1]);
+      dedupeAppend(current, cx, cy);
+    } else if (cmd === "C" || cmd === "c") {
+      const x1 = Number(s[1]);
+      const y1 = Number(s[2]);
+      const x2 = Number(s[3]);
+      const y2 = Number(s[4]);
+      const x = Number(s[5]);
+      const y = Number(s[6]);
+      const pts = sampleCubic(cx, cy, x1, y1, x2, y2, x, y, flatness);
+      for (let i = 1; i < pts.length; i++) {
+        dedupeAppend(current, pts[i][0], pts[i][1]);
+      }
+      cx = x;
+      cy = y;
+    } else if (cmd === "Q" || cmd === "q") {
+      const x1 = Number(s[1]);
+      const y1 = Number(s[2]);
+      const x = Number(s[3]);
+      const y = Number(s[4]);
+      const pts = sampleQuad(cx, cy, x1, y1, x, y, flatness);
+      for (let i = 1; i < pts.length; i++) {
+        dedupeAppend(current, pts[i][0], pts[i][1]);
+      }
+      cx = x;
+      cy = y;
+    } else if (cmd === "Z" || cmd === "z") {
+      closed = true;
+      dedupeAppend(current, subStart[0], subStart[1]);
+    }
+  }
+  flush();
+  return subpaths;
+}
+
+function parsePointsAttr(raw: string | null): [number, number][] {
+  if (!raw) return [];
+  _NUM_RE.lastIndex = 0;
+  const nums: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = _NUM_RE.exec(raw)) !== null) {
+    nums.push(parseFloat(m[0]));
+  }
+  if (nums.length % 2 !== 0) return [];
+  const out: [number, number][] = [];
+  for (let i = 0; i < nums.length; i += 2) {
+    out.push([nums[i], nums[i + 1]]);
+  }
+  return out;
+}
+
+function parseStyle(style: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of style.split(";")) {
+    const p = part.trim();
+    if (!p || !p.includes(":")) continue;
+    const [k, ...rest] = p.split(":");
+    out[k.trim().toLowerCase()] = rest.join(":").trim();
+  }
+  return out;
+}
+
+function hasDasharray(el: SvgElement): boolean {
+  const da = el.getAttribute("stroke-dasharray");
+  if (da && da.trim() && da.trim().toLowerCase() !== "none") return true;
+  const style = el.getAttribute("style");
+  if (style) {
+    const v = parseStyle(style)["stroke-dasharray"]?.trim() ?? "";
+    if (v && v.toLowerCase() !== "none") return true;
+  }
+  return false;
+}
+
+function strokePaint(el: SvgElement): string {
+  const s = el.getAttribute("stroke");
+  if (s && s.trim().toLowerCase() !== "none" && s.trim().toLowerCase() !== "transparent" && s.trim()) {
+    return s.trim();
+  }
+  const style = el.getAttribute("style");
+  if (style) {
+    const st = parseStyle(style).stroke?.trim() ?? "";
+    if (st && st.toLowerCase() !== "none" && st.toLowerCase() !== "transparent") {
+      return st;
+    }
+  }
+  return "#000000";
+}
+
+function strokeWidthPx(el: SvgElement): number {
+  const sw = el.getAttribute("stroke-width");
+  if (sw) {
+    return parseFloat(sw.replace(/px/gi, "").trim());
+  }
+  const style = el.getAttribute("style");
+  if (style) {
+    const w = parseStyle(style)["stroke-width"]?.replace(/px/gi, "").trim() ?? "";
+    if (w) return parseFloat(w);
+  }
+  return 1;
+}
+
+function capStyle(el: SvgElement): number {
+  let raw = (el.getAttribute("stroke-linecap") || "").trim().toLowerCase();
+  if (!raw) {
+    const style = el.getAttribute("style");
+    if (style) raw = parseStyle(style)["stroke-linecap"]?.trim().toLowerCase() ?? "";
+  }
+  if (raw === "round") return BufferParameters.CAP_ROUND;
+  if (raw === "square") return BufferParameters.CAP_SQUARE;
+  return BufferParameters.CAP_FLAT;
+}
+
+function joinStyle(el: SvgElement): number {
+  let raw = (el.getAttribute("stroke-linejoin") || "").trim().toLowerCase();
+  if (!raw) {
+    const style = el.getAttribute("style");
+    if (style) raw = parseStyle(style)["stroke-linejoin"]?.trim().toLowerCase() ?? "";
+  }
+  if (raw === "round") return BufferParameters.JOIN_ROUND;
+  if (raw === "bevel") return BufferParameters.JOIN_BEVEL;
+  return BufferParameters.JOIN_MITRE;
+}
+
+function mitreLimit(el: SvgElement): number {
+  const raw = el.getAttribute("stroke-miterlimit");
+  if (raw) {
+    const v = parseFloat(raw);
+    if (!Number.isNaN(v)) return v;
+  }
+  const style = el.getAttribute("style");
+  if (style) {
+    const v = parseStyle(style)["stroke-miterlimit"]?.trim() ?? "";
+    if (v) {
+      const n = parseFloat(v);
+      if (!Number.isNaN(n)) return n;
+    }
+  }
+  return 4.0;
+}
+
+function visibleFill(el: SvgElement): boolean {
+  const f = el.getAttribute("fill");
+  if (f !== null) {
+    const fl = f.trim().toLowerCase();
+    if (fl === "none" || fl === "transparent" || fl === "") return false;
+    return true;
+  }
+  const style = el.getAttribute("style");
+  if (style) {
+    const fl = parseStyle(style).fill?.trim().toLowerCase() ?? "";
+    if (fl === "none" || fl === "transparent") return false;
+    if (fl) return true;
+  }
+  return false;
+}
+
+function stripStrokePresentation(el: SvgElement): void {
+  for (const k of [
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-opacity",
+  ]) {
+    el.removeAttribute(k);
+  }
+  const style = el.getAttribute("style");
+  if (!style) return;
+  const sd = parseStyle(style);
+  for (const key of Object.keys(sd)) {
+    if (key.startsWith("stroke")) delete sd[key];
+  }
+  const keys = Object.keys(sd);
+  if (keys.length) {
+    el.setAttribute("style", keys.map((k) => `${k}:${sd[k]}`).join(";"));
+  } else {
+    el.removeAttribute("style");
+  }
+}
+
+function ringToD(coords: [number, number][]): string {
+  if (coords.length < 2) return "";
+  let c = [...coords];
+  const last = c[c.length - 1];
+  const first = c[0];
+  if (
+    c.length >= 2 &&
+    Math.abs(first[0] - last[0]) < COORD_EPS &&
+    Math.abs(first[1] - last[1]) < COORD_EPS
+  ) {
+    c = c.slice(0, -1);
+  }
+  if (c.length < 2) return "";
+  const parts = [`M ${c[0][0].toPrecision(6)},${c[0][1].toPrecision(6)}`];
+  for (let i = 1; i < c.length; i++) {
+    parts.push(`L ${c[i][0].toPrecision(6)},${c[i][1].toPrecision(6)}`);
+  }
+  parts.push("Z");
+  return parts.join(" ");
+}
+
+function coordinatesToOpenPathD(coords: { x: number; y: number }[]): string {
+  if (coords.length < 2) return "";
+  const parts = [`M ${coords[0].x.toPrecision(6)},${coords[0].y.toPrecision(6)}`];
+  for (let i = 1; i < coords.length; i++) {
+    parts.push(`L ${coords[i].x.toPrecision(6)},${coords[i].y.toPrecision(6)}`);
+  }
+  return parts.join(" ");
+}
+
+function coordinatesToClosedPathDFromCoords(coords: { x: number; y: number }[]): string {
+  if (coords.length < 2) return "";
+  let c = coords.map((p) => [p.x, p.y] as [number, number]);
+  const last = c[c.length - 1];
+  const first = c[0];
+  if (
+    c.length >= 2 &&
+    Math.abs(first[0] - last[0]) < COORD_EPS &&
+    Math.abs(first[1] - last[1]) < COORD_EPS
+  ) {
+    c = c.slice(0, -1);
+  }
+  if (c.length < 2) return "";
+  const parts = [`M ${c[0][0].toPrecision(6)},${c[0][1].toPrecision(6)}`];
+  for (let i = 1; i < c.length; i++) {
+    parts.push(`L ${c[i][0].toPrecision(6)},${c[i][1].toPrecision(6)}`);
+  }
+  parts.push("Z");
+  return parts.join(" ");
+}
+
+/**
+ * Serialize LineString / LinearRing / MultiLineString / line-only GeometryCollection to SVG path d.
+ * Used for polygon fill boundaries (getBoundary) in mixed-icon preprocessing.
+ */
+export function jtsLinealGeometryToPathD(geom: Geometry): string {
+  const g = geom as unknown as {
+    isEmpty(): boolean;
+    getGeometryType(): string;
+    getNumGeometries(): number;
+    getGeometryN(i: number): Geometry;
+    getCoordinates(): { x: number; y: number }[];
+    isClosed(): boolean;
+  };
+  if (g.isEmpty()) return "";
+  const gt = g.getGeometryType();
+  if (gt === "LineString" || gt === "LinearRing") {
+    const coords = g.getCoordinates();
+    if (gt === "LinearRing" || (typeof g.isClosed === "function" && g.isClosed())) {
+      return coordinatesToClosedPathDFromCoords(coords);
+    }
+    return coordinatesToOpenPathD(coords);
+  }
+  if (gt === "MultiLineString") {
+    const chunks: string[] = [];
+    for (let i = 0; i < g.getNumGeometries(); i++) {
+      const part = jtsLinealGeometryToPathD(g.getGeometryN(i));
+      if (part) chunks.push(part);
+    }
+    return chunks.join(" ").trim();
+  }
+  if (geom instanceof GeometryCollection) {
+    const chunks: string[] = [];
+    for (let i = 0; i < g.getNumGeometries(); i++) {
+      const part = jtsLinealGeometryToPathD(g.getGeometryN(i));
+      if (part) chunks.push(part);
+    }
+    return chunks.join(" ").trim();
+  }
+  return "";
+}
+
+function polygonToPathD(poly: Polygon): { d: string; evenodd: boolean } {
+  const shell = poly.getExteriorRing();
+  const coords = shell.getCoordinates();
+  const exterior: [number, number][] = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    exterior.push([coords[i].x, coords[i].y]);
+  }
+  const parts: string[] = [];
+  const rd = ringToD(exterior);
+  if (rd) parts.push(rd);
+  let needsEvenodd = false;
+  for (let hi = 0; hi < poly.getNumInteriorRing(); hi++) {
+    const hole = poly.getInteriorRingN(hi);
+    const hc = hole.getCoordinates();
+    const hpts: [number, number][] = [];
+    for (let i = 0; i < hc.length - 1; i++) {
+      hpts.push([hc[i].x, hc[i].y]);
+    }
+    const hd = ringToD(hpts);
+    if (hd) parts.push(hd);
+    needsEvenodd = true;
+  }
+  const d = parts.filter(Boolean).join(" ").trim();
+  return { d, evenodd: needsEvenodd };
+}
+
+function geometryToPathD(geom: Geometry): {
+  d: string;
+  evenodd: boolean;
+} {
+  const g = geom as unknown as {
+    isEmpty(): boolean;
+    getGeometryType(): string;
+    getNumGeometries(): number;
+    getGeometryN(i: number): Geometry;
+  };
+  if (g.isEmpty()) return { d: "", evenodd: false };
+  const gt = g.getGeometryType();
+  if (gt === "Polygon") {
+    return polygonToPathD(geom as unknown as Polygon);
+  }
+  if (gt === "MultiPolygon") {
+    const mp = geom as unknown as MultiPolygon;
+    const chunks: string[] = [];
+    let needs = false;
+    for (let i = 0; i < mp.getNumGeometries(); i++) {
+      const { d, evenodd } = polygonToPathD(mp.getGeometryN(i) as unknown as Polygon);
+      if (d) chunks.push(d);
+      needs = needs || evenodd;
+    }
+    return {
+      d: chunks.join(" ").trim(),
+      evenodd: needs || mp.getNumGeometries() > 1,
+    };
+  }
+  if (gt === "Point") return { d: "", evenodd: false };
+  if (geom instanceof GeometryCollection) {
+    const polys: Polygon[] = [];
+    for (let i = 0; i < g.getNumGeometries(); i++) {
+      const gi = g.getGeometryN(i) as unknown as { getGeometryType(): string };
+      if (gi.getGeometryType() === "Polygon") polys.push(gi as unknown as Polygon);
+    }
+    if (!polys.length) return { d: "", evenodd: false };
+    if (polys.length === 1) return polygonToPathD(polys[0]);
+    const mp = geomFact.createMultiPolygon(polys);
+    return geometryToPathD(mp as unknown as Geometry);
+  }
+  return { d: "", evenodd: false };
+}
+
+function coordsToLinearRing(coords: [number, number][]): Coordinate[] {
+  return coords.map(([x, y]) => new Coordinate(x, y));
+}
+
+function subpathToFilledPolygon(sp: Subpath): Polygon | null {
+  if (sp.coords.length < 2) return null;
+  const pts: [number, number][] = sp.coords.map(([x, y]) => [x, y]);
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const explicitClose =
+    sp.closed ||
+    (Math.abs(first[0] - last[0]) < COORD_EPS && Math.abs(first[1] - last[1]) < COORD_EPS);
+  if (!explicitClose) {
+    pts.push([first[0], first[1]]);
+  }
+  const f = pts[0];
+  const ln = pts[pts.length - 1];
+  if (Math.abs(f[0] - ln[0]) >= COORD_EPS || Math.abs(f[1] - ln[1]) >= COORD_EPS) {
+    pts.push([f[0], f[1]]);
+  }
+  if (pts.length < 4) return null;
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+function fillSubpathsToGeometry(subpaths: Subpath[]): Geometry | null {
+  const geoms: Geometry[] = [];
+  for (const sp of subpaths) {
+    const poly = subpathToFilledPolygon(sp);
+    if (poly) {
+      const gg = poly as unknown as { isEmpty(): boolean };
+      if (!gg.isEmpty()) geoms.push(poly as unknown as Geometry);
+    }
+  }
+  if (!geoms.length) return null;
+  if (geoms.length === 1) return geoms[0];
+  const gc = geomFact.createGeometryCollection(geoms);
+  return UnaryUnionOp.union(gc) ?? null;
+}
+
+function rectToFillPolygon(el: SvgElement): Polygon | null {
+  const x = parseFloat(el.getAttribute("x") || "0");
+  const y = parseFloat(el.getAttribute("y") || "0");
+  const w = parseFloat(el.getAttribute("width") || "0");
+  const h = parseFloat(el.getAttribute("height") || "0");
+  if (!(w > 0 && h > 0)) return null;
+  const pts: [number, number][] = [
+    [x, y],
+    [x + w, y],
+    [x + w, y + h],
+    [x, y + h],
+    [x, y],
+  ];
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+function circleToFillPolygon(el: SvgElement, segments = 48): Polygon | null {
+  const cx = parseFloat(el.getAttribute("cx") || "0");
+  const cy = parseFloat(el.getAttribute("cy") || "0");
+  const r = parseFloat(el.getAttribute("r") || "0");
+  if (!(r > 0)) return null;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < segments; i++) {
+    const t = (i / segments) * 2 * Math.PI;
+    pts.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+  }
+  if (pts.length < 3) return null;
+  const f = pts[0];
+  const l = pts[pts.length - 1];
+  if (Math.abs(f[0] - l[0]) > COORD_EPS || Math.abs(f[1] - l[1]) > COORD_EPS) {
+    pts.push([f[0], f[1]]);
+  }
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+function ellipseToFillPolygon(el: SvgElement, segments = 48): Polygon | null {
+  const cx = parseFloat(el.getAttribute("cx") || "0");
+  const cy = parseFloat(el.getAttribute("cy") || "0");
+  const rx = parseFloat(el.getAttribute("rx") || "0");
+  const ry = parseFloat(el.getAttribute("ry") || "0");
+  if (!(rx > 0 && ry > 0)) return null;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < segments; i++) {
+    const t = (i / segments) * 2 * Math.PI;
+    pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
+  }
+  if (pts.length < 3) return null;
+  const f = pts[0];
+  const l = pts[pts.length - 1];
+  if (Math.abs(f[0] - l[0]) > COORD_EPS || Math.abs(f[1] - l[1]) > COORD_EPS) {
+    pts.push([f[0], f[1]]);
+  }
+  try {
+    const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
+    return geomFact.createPolygon(ring);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * JSTS unary union of geometries (empty inputs filtered). For mixed fill+stroke merging.
+ */
+export function unionJtsGeometries(geoms: Geometry[]): Geometry | null {
+  const nonempty = geoms.filter((g) => {
+    const gg = g as unknown as { isEmpty(): boolean };
+    return gg && !gg.isEmpty();
+  });
+  if (!nonempty.length) return null;
+  if (nonempty.length === 1) return nonempty[0];
+  const gc = geomFact.createGeometryCollection(nonempty);
+  return UnaryUnionOp.union(gc) ?? null;
+}
+
+export function jtsGeometryToSvgPathD(geom: Geometry): { d: string; evenodd: boolean } {
+  return geometryToPathD(geom);
+}
+
+export function strokeElementToOutlineGeometry(el: SvgElement, flatness: number): Geometry | null {
+  if (!elementIsStroked(el) || hasDasharray(el)) return null;
+  const tag = localTag(el);
+  if (tag === "path") {
+    const d = el.getAttribute("d");
+    if (!d) return null;
+    const subpaths = flattenPathToSubpaths(d, flatness);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  if (tag === "line") {
+    const subpaths = lineSubpaths(el);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  if (tag === "polyline") {
+    const subpaths = polylineSubpaths(el);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  if (tag === "polygon") {
+    const subpaths = polygonSubpaths(el);
+    if (!subpaths.length) return null;
+    return outlineGeometryFromSubpaths(subpaths, el, flatness);
+  }
+  return null;
+}
+
+export function fillElementToGeometry(el: SvgElement, flatness: number): Geometry | null {
+  if (!visibleFill(el)) return null;
+  const tag = localTag(el);
+  if (tag === "path") {
+    const d = el.getAttribute("d");
+    if (!d) return null;
+    const subpaths = flattenPathToSubpaths(d, flatness);
+    return fillSubpathsToGeometry(subpaths);
+  }
+  if (tag === "polygon") {
+    return fillSubpathsToGeometry(polygonSubpaths(el));
+  }
+  if (tag === "polyline") {
+    return fillSubpathsToGeometry(polylineSubpaths(el));
+  }
+  if (tag === "rect") {
+    const p = rectToFillPolygon(el);
+    return p as unknown as Geometry | null;
+  }
+  if (tag === "circle") {
+    const p = circleToFillPolygon(el);
+    return p as unknown as Geometry | null;
+  }
+  if (tag === "ellipse") {
+    const p = ellipseToFillPolygon(el);
+    return p as unknown as Geometry | null;
+  }
+  return null;
+}
+
+function bufferSubpaths(
+  subpaths: Subpath[],
+  halfW: number,
+  cap: number,
+  join: number,
+  mitre: number,
+  quadSegs: number
+): Geometry | null {
+  const bp = new BufferParameters();
+  bp.setQuadrantSegments(quadSegs);
+  bp.setEndCapStyle(cap);
+  bp.setJoinStyle(join);
+  bp.setMitreLimit(mitre);
+  const geoms: Geometry[] = [];
+  for (const { coords, closed } of subpaths) {
+    if (coords.length < 2) continue;
+    try {
+      if (closed && coords.length >= 3) {
+        let c = coordsToLinearRing(coords);
+        const first = c[0];
+        const last = c[c.length - 1];
+        if (
+          Math.abs(first.x - last.x) > COORD_EPS ||
+          Math.abs(first.y - last.y) > COORD_EPS
+        ) {
+          c = [...c, new Coordinate(first.x, first.y)];
+        }
+        const ring = geomFact.createLinearRing(c);
+        const bufOp = new BufferOp(ring, bp);
+        const g = bufOp.getResultGeometry(halfW) as unknown as { isEmpty(): boolean };
+        if (!g.isEmpty()) geoms.push(g as unknown as Geometry);
+      } else {
+        const line = geomFact.createLineString(coordsToLinearRing(coords));
+        const bufOp = new BufferOp(line, bp);
+        const g = bufOp.getResultGeometry(halfW) as unknown as { isEmpty(): boolean };
+        if (!g.isEmpty()) geoms.push(g as unknown as Geometry);
+      }
+    } catch {
+      continue;
+    }
+  }
+  if (!geoms.length) return null;
+  if (geoms.length === 1) return geoms[0];
+  const gc = geomFact.createGeometryCollection(geoms);
+  return UnaryUnionOp.union(gc) ?? null;
+}
+
+function outlineGeometryFromSubpaths(
+  subpaths: Subpath[],
+  el: SvgElement,
+  flatness: number
+): Geometry | null {
+  const sw = strokeWidthPx(el);
+  if (sw <= 0) return null;
+  const half = sw / 2;
+  const cap = capStyle(el);
+  const join = joinStyle(el);
+  const mitre = mitreLimit(el);
+  return bufferSubpaths(subpaths, half, cap, join, mitre, 8);
+}
+
+function outlineFromSubpaths(
+  subpaths: Subpath[],
+  el: SvgElement,
+  flatness: number
+): { d: string; evenodd: boolean } | null {
+  const g = outlineGeometryFromSubpaths(subpaths, el, flatness);
+  if (!g) return null;
+  return geometryToPathD(g);
+}
+
+function insertAfter(parent: SvgElement, reference: SvgElement, newEl: SvgElement): void {
+  const kids = elementChildren(parent);
+  const idx = kids.indexOf(reference);
+  const next = idx >= 0 && idx + 1 < kids.length ? kids[idx + 1] : null;
+  if (next) {
+    parent.insertBefore(newEl, next);
+  } else {
+    parent.appendChild(newEl);
+  }
+}
+
+function convertPathElement(
+  el: SvgElement,
+  parent: SvgElement,
+  flatness: number,
+  doc: SvgDocument
+): boolean {
+  if (!elementIsStroked(el) || hasDasharray(el)) return false;
+  const d = el.getAttribute("d");
+  if (!d) return false;
+  const subpaths = flattenPathToSubpaths(d, flatness);
+  if (!subpaths.length) return false;
+  const out = outlineFromSubpaths(subpaths, el, flatness);
+  if (!out || !out.d) return false;
+  const { d: pathD, evenodd } = out;
+  const paint = strokePaint(el);
+  const hasFill = visibleFill(el);
+
+  if (hasFill) {
+    const outline = doc.createElementNS(SVG_NS, "path");
+    outline.setAttribute("d", pathD);
+    outline.setAttribute("fill", paint);
+    if (evenodd) outline.setAttribute("fill-rule", "evenodd");
+    insertAfter(parent, el, outline);
+    stripStrokePresentation(el);
+  } else {
+    el.setAttribute("d", pathD);
+    el.setAttribute("fill", paint);
+    if (evenodd) el.setAttribute("fill-rule", "evenodd");
+    stripStrokePresentation(el);
+  }
+  return true;
+}
+
+function lineSubpaths(el: SvgElement): Subpath[] {
+  try {
+    const x1 = parseFloat(el.getAttribute("x1") || "0");
+    const y1 = parseFloat(el.getAttribute("y1") || "0");
+    const x2 = parseFloat(el.getAttribute("x2") || "0");
+    const y2 = parseFloat(el.getAttribute("y2") || "0");
+    return [{ coords: [[x1, y1], [x2, y2]], closed: false }];
+  } catch {
+    return [];
+  }
+}
+
+function polylineSubpaths(el: SvgElement): Subpath[] {
+  const pts = parsePointsAttr(el.getAttribute("points"));
+  if (pts.length < 2) return [];
+  return [{ coords: pts, closed: false }];
+}
+
+function polygonSubpaths(el: SvgElement): Subpath[] {
+  const pts = parsePointsAttr(el.getAttribute("points"));
+  if (pts.length < 3) return [];
+  return [{ coords: pts, closed: true }];
+}
+
+function replaceWithPath(
+  parent: SvgElement,
+  el: SvgElement,
+  d: string,
+  evenodd: boolean,
+  doc: SvgDocument
+): SvgElement {
+  const newEl = doc.createElementNS(SVG_NS, "path");
+  newEl.setAttribute("d", d);
+  if (evenodd) newEl.setAttribute("fill-rule", "evenodd");
+  parent.replaceChild(newEl, el);
+  return newEl;
+}
+
+function convertLineLikeElementSimple(
+  el: SvgElement,
+  parent: SvgElement,
+  tag: string,
+  flatness: number,
+  doc: SvgDocument
+): boolean {
+  if (!elementIsStroked(el) || hasDasharray(el)) return false;
+  if (visibleFill(el)) return false;
+  let subpaths: Subpath[];
+  if (tag === "line") subpaths = lineSubpaths(el);
+  else if (tag === "polyline") subpaths = polylineSubpaths(el);
+  else if (tag === "polygon") subpaths = polygonSubpaths(el);
+  else return false;
+  const out = outlineFromSubpaths(subpaths, el, flatness);
+  if (!out || !out.d) return false;
+  const newEl = replaceWithPath(parent, el, out.d, out.evenodd, doc);
+  newEl.setAttribute("fill", strokePaint(el));
+  return true;
+}
+
+function parentMap(root: SvgElement): Map<SvgElement, SvgElement> {
+  const m = new Map<SvgElement, SvgElement>();
+  const walk = (el: SvgElement) => {
+    for (const c of elementChildren(el)) {
+      m.set(c, el);
+      walk(c);
+    }
+  };
+  walk(root);
+  return m;
+}
+
+function collectElements(root: SvgElement): SvgElement[] {
+  const all: SvgElement[] = [];
+  const walk = (el: SvgElement) => {
+    all.push(el);
+    for (const c of elementChildren(el)) walk(c);
+  };
+  walk(root);
+  return all;
+}
+
+export function expandStrokesInTree(root: SvgElement, flatness = 1): number {
+  const doc = root.ownerDocument as SvgDocument | null;
+  if (!doc) throw new Error("expandStrokesInTree: missing ownerDocument");
+  let converted = 0;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const pmap = parentMap(root);
+    for (const el of collectElements(root)) {
+      const tag = localTag(el);
+      const parent = pmap.get(el);
+      if (parent === undefined) continue;
+      if (tag === "path") {
+        if (convertPathElement(el, parent, flatness, doc)) {
+          converted++;
+          changed = true;
+        }
+      } else if (tag === "line") {
+        if (convertLineLikeElementSimple(el, parent, tag, flatness, doc)) {
+          converted++;
+          changed = true;
+        }
+      } else if (tag === "polyline") {
+        if (convertLineLikeElementSimple(el, parent, tag, flatness, doc)) {
+          converted++;
+          changed = true;
+        }
+      } else if (tag === "polygon") {
+        if (convertLineLikeElementSimple(el, parent, tag, flatness, doc)) {
+          converted++;
+          changed = true;
+        }
+      }
+    }
+  }
+  return converted;
+}
+
+function processWeightSvgPhase4(path: string, flatness: number): number {
+  const doc = parseSvgFile(path);
+  const svgRoot = svgDocumentElement(doc);
+  const n = expandStrokesInTree(svgRoot, flatness);
+  writeFileSync(path, elementToBytes(svgRoot));
+  return n;
+}
+
+export function runStrokeToOutline(outputDir: PathLike, flatness = 1): Record<string, number> {
+  const dir = String(outputDir);
+  const results: Record<string, number> = {};
+  for (const name of readdirSync(dir).filter((f) => f.endsWith(".svg")).sort()) {
+    if (name === "original.svg") continue;
+    const stem = name.replace(/\.svg$/i, "");
+    if (!parseWeightStem(stem)) continue;
+    const full = join(dir, name);
+    results[stem] = processWeightSvgPhase4(full, flatness);
+  }
+  return results;
+}

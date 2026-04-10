@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseSvgXml, svgDocumentElement } from "./xml.js";
-import { representativeStrokeStyleForMixedPreprocess } from "./svgStrokeDetection.js";
-import { mixedIconToStrokedSvg } from "./mixedIconToStrokedSvg.js";
+import { parseSvgXml, svgDocumentElement } from "../svg/xml.js";
+import { representativeStrokeStyleForMixedPreprocess } from "../routing/svgRouting.js";
+import { mixedIconToStrokedSvg } from "./mixedToStrokedSvg.js";
 
 describe("representativeStrokeStyleForMixedPreprocess", () => {
   it("uses max stroke-width and first stroke color in document order", () => {
