@@ -1,0 +1,14 @@
+{
+  "name": "mixed-icon-paper-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node process.mjs"
+  },
+  "dependencies": {
+    "canvas": "^3.1.0",
+    "jsdom": "^25.0.1",
+    "makerjs": "^0.19.2",
+    "paper": "^0.12.18"
+  }
+}

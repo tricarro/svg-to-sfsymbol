@@ -110,7 +110,7 @@ export function classifySvgStrokedOrFilled(xml: string): "stroked" | "filled" {
   return walk(root, false) ?? "filled";
 }
 
-function elementHasVisibleFill(el: SvgElement): boolean {
+export function elementHasVisibleFill(el: SvgElement): boolean {
   const f = el.getAttribute("fill");
   if (f !== null) {
     const fl = f.trim().toLowerCase();
@@ -125,7 +125,45 @@ function elementHasVisibleFill(el: SvgElement): boolean {
 }
 
 /**
- * Route uploads: fill-only, stroke-only, or both (mixed → variable template after rasterizing to one fill).
+ * Max stroke-width among visibly stroked graphical elements (missing width counts as 1),
+ * and stroke color from the first such element in document order. Used when preprocessing
+ * mixed icons before the square pipeline.
+ */
+export function representativeStrokeStyleForMixedPreprocess(root: SvgElement): {
+  width: number;
+  color: string;
+} {
+  let maxW = 0;
+  let firstColor: string | null = null;
+  const scan = (el: SvgElement, inDefs: boolean) => {
+    const tag = localTag(el);
+    if (tag === "defs") {
+      for (const c of elementChildren(el)) scan(c, true);
+      return;
+    }
+    if (inDefs) {
+      for (const c of elementChildren(el)) scan(c, true);
+      return;
+    }
+    if (GRAPHICAL_TAGS.has(tag) && elementHasVisibleStroke(el)) {
+      const w = strokeWidthFromElement(el) ?? 1;
+      if (w > maxW) maxW = w;
+      if (firstColor === null) {
+        const c = strokeColorFromElement(el);
+        if (c && !isNoneOrTransparent(c)) firstColor = c;
+      }
+    }
+    for (const c of elementChildren(el)) scan(c, false);
+  };
+  scan(root, false);
+  return {
+    width: maxW > 0 ? maxW : 1,
+    color: firstColor ?? "#000000",
+  };
+}
+
+/**
+ * Route uploads: fill-only, stroke-only, or both (mixed → square pipeline after fill-to-stroke preprocess).
  */
 export function classifySvgRouting(xml: string): "filled" | "stroked-only" | "mixed" {
   const doc = parseSvgXml(xml);

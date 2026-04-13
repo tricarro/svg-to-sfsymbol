@@ -338,6 +338,77 @@ function ringToD(coords: [number, number][]): string {
   return parts.join(" ");
 }
 
+function coordinatesToOpenPathD(coords: { x: number; y: number }[]): string {
+  if (coords.length < 2) return "";
+  const parts = [`M ${coords[0].x.toPrecision(6)},${coords[0].y.toPrecision(6)}`];
+  for (let i = 1; i < coords.length; i++) {
+    parts.push(`L ${coords[i].x.toPrecision(6)},${coords[i].y.toPrecision(6)}`);
+  }
+  return parts.join(" ");
+}
+
+function coordinatesToClosedPathDFromCoords(coords: { x: number; y: number }[]): string {
+  if (coords.length < 2) return "";
+  let c = coords.map((p) => [p.x, p.y] as [number, number]);
+  const last = c[c.length - 1];
+  const first = c[0];
+  if (
+    c.length >= 2 &&
+    Math.abs(first[0] - last[0]) < COORD_EPS &&
+    Math.abs(first[1] - last[1]) < COORD_EPS
+  ) {
+    c = c.slice(0, -1);
+  }
+  if (c.length < 2) return "";
+  const parts = [`M ${c[0][0].toPrecision(6)},${c[0][1].toPrecision(6)}`];
+  for (let i = 1; i < c.length; i++) {
+    parts.push(`L ${c[i][0].toPrecision(6)},${c[i][1].toPrecision(6)}`);
+  }
+  parts.push("Z");
+  return parts.join(" ");
+}
+
+/**
+ * Serialize LineString / LinearRing / MultiLineString / line-only GeometryCollection to SVG path d.
+ * Used for polygon fill boundaries (getBoundary) in mixed-icon preprocessing.
+ */
+export function jtsLinealGeometryToPathD(geom: Geometry): string {
+  const g = geom as unknown as {
+    isEmpty(): boolean;
+    getGeometryType(): string;
+    getNumGeometries(): number;
+    getGeometryN(i: number): Geometry;
+    getCoordinates(): { x: number; y: number }[];
+    isClosed(): boolean;
+  };
+  if (g.isEmpty()) return "";
+  const gt = g.getGeometryType();
+  if (gt === "LineString" || gt === "LinearRing") {
+    const coords = g.getCoordinates();
+    if (gt === "LinearRing" || (typeof g.isClosed === "function" && g.isClosed())) {
+      return coordinatesToClosedPathDFromCoords(coords);
+    }
+    return coordinatesToOpenPathD(coords);
+  }
+  if (gt === "MultiLineString") {
+    const chunks: string[] = [];
+    for (let i = 0; i < g.getNumGeometries(); i++) {
+      const part = jtsLinealGeometryToPathD(g.getGeometryN(i));
+      if (part) chunks.push(part);
+    }
+    return chunks.join(" ").trim();
+  }
+  if (geom instanceof GeometryCollection) {
+    const chunks: string[] = [];
+    for (let i = 0; i < g.getNumGeometries(); i++) {
+      const part = jtsLinealGeometryToPathD(g.getGeometryN(i));
+      if (part) chunks.push(part);
+    }
+    return chunks.join(" ").trim();
+  }
+  return "";
+}
+
 function polygonToPathD(poly: Polygon): { d: string; evenodd: boolean } {
   const shell = poly.getExteriorRing();
   const coords = shell.getCoordinates();
@@ -479,9 +550,15 @@ function circleToFillPolygon(el: SvgElement, segments = 48): Polygon | null {
   const r = parseFloat(el.getAttribute("r") || "0");
   if (!(r > 0)) return null;
   const pts: [number, number][] = [];
-  for (let i = 0; i <= segments; i++) {
+  for (let i = 0; i < segments; i++) {
     const t = (i / segments) * 2 * Math.PI;
     pts.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+  }
+  if (pts.length < 3) return null;
+  const f = pts[0];
+  const l = pts[pts.length - 1];
+  if (Math.abs(f[0] - l[0]) > COORD_EPS || Math.abs(f[1] - l[1]) > COORD_EPS) {
+    pts.push([f[0], f[1]]);
   }
   try {
     const ring = geomFact.createLinearRing(coordsToLinearRing(pts));
@@ -498,9 +575,15 @@ function ellipseToFillPolygon(el: SvgElement, segments = 48): Polygon | null {
   const ry = parseFloat(el.getAttribute("ry") || "0");
   if (!(rx > 0 && ry > 0)) return null;
   const pts: [number, number][] = [];
-  for (let i = 0; i <= segments; i++) {
+  for (let i = 0; i < segments; i++) {
     const t = (i / segments) * 2 * Math.PI;
     pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
+  }
+  if (pts.length < 3) return null;
+  const f = pts[0];
+  const l = pts[pts.length - 1];
+  if (Math.abs(f[0] - l[0]) > COORD_EPS || Math.abs(f[1] - l[1]) > COORD_EPS) {
+    pts.push([f[0], f[1]]);
   }
   try {
     const ring = geomFact.createLinearRing(coordsToLinearRing(pts));

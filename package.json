@@ -1,0 +1,8 @@
+{
+  "name": "svg-to-sfsymbol-monorepo",
+  "private": true,
+  "workspaces": ["server", "build-pipeline"],
+  "scripts": {
+    "test": "npm run test --workspace=build-pipeline && npm run test --workspace=svg-to-sfsymbol-server"
+  }
+}

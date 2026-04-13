@@ -5,11 +5,7 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
-import { runFullConvert } from "./pipeline.js";
-import { defaultSquareTemplatePath } from "./phase5.js";
-import { classifySvgRouting } from "./svgStrokeDetection.js";
-import { mixedIconToFillOnlySvg } from "./mixedIconToFilled.js";
-import { mergeFilledIconIntoVariableTemplate } from "./variableTemplateFilled.js";
+import { runFullConvert, defaultSquareTemplatePath, classifySvgRouting, mixedIconToStrokedSvg, mergeFilledIconIntoVariableTemplate, } from "build-pipeline";
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const ENV_TEMPLATE = "SFSYMBOL_TEMPLATE_PATH";
 function expandUser(p) {
@@ -41,7 +37,7 @@ export function resolveSquareTemplate() {
     const def = defaultSquareTemplatePath();
     if (!def) {
         throw new Error(`No SF Symbol square template found. Set ${ENV_TEMPLATE} to the template file path, ` +
-            "or add resources/square_template.svg at the repository root.");
+            "or ensure build-pipeline/resources/square_template.svg exists.");
     }
     return def;
 }
@@ -55,20 +51,20 @@ export function convertSync(svgBytes, originalFilename) {
     const stem = safeStem(originalFilename);
     const xml = svgBytes.toString("utf-8");
     const route = classifySvgRouting(xml);
-    if (route === "filled" || route === "mixed") {
-        const iconXml = route === "mixed" ? mixedIconToFillOnlySvg(xml) : xml;
-        const data = mergeFilledIconIntoVariableTemplate(iconXml);
+    if (route === "filled") {
+        const data = mergeFilledIconIntoVariableTemplate(xml);
         return { data, downloadName: `${stem}-SFSymbol.svg` };
     }
     const template = resolveSquareTemplate();
     const tmp = mkdtempSync(join(tmpdir(), "svg2sfs_"));
     const inputPath = join(tmp, `${stem}.svg`);
-    writeFileSync(inputPath, svgBytes);
+    const inputBytes = route === "mixed" ? Buffer.from(mixedIconToStrokedSvg(xml), "utf-8") : svgBytes;
+    writeFileSync(inputPath, inputBytes);
     const outSvg = join(tmp, `${stem}_SFSymbol.svg`);
     const result = runFullConvert(inputPath, tmp, {
-        phase5Template: template,
-        phase5Out: outSvg,
-        phase5Missing: "skip",
+        squareTemplatePath: template,
+        mergedSvgOutputPath: outSvg,
+        missingSlotPolicy: "skip",
     });
     const merged = result.mergedSvg;
     if (!merged || !existsSync(merged)) {
