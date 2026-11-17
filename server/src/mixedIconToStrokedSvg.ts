@@ -1,18 +1,25 @@
 /**
  * Mixed (fill + stroke) icons → SVG for the square SF Symbol pipeline.
- * Fill-only shapes become a stroked boundary path (representative stroke). Stroke-only
- * shapes pass through. Stroke+fill shapes emit three layers in order: fill-only clone,
- * fill-boundary path stroked with representative width/color, then stroke-only clone.
- * Text with stroke+fill skips the synthetic boundary path (fill-only + stroke-only only).
+ * Fill-only shapes become a fill path marked with FILL_OFFSET_ATTR (plus a representative
+ * stroke so phase 3 assigns it a weight); phase 4 grows or shrinks that fill relative to
+ * Regular instead of stroking its boundary. Stroke-only shapes pass through. Stroke+fill
+ * shapes emit an unmodified fill-only clone, then a stroke-only clone.
  * Limitations: same as mixedIconToFilled (no group/transform bake, heuristic paint only).
  */
 import { XMLSerializer } from "@xmldom/xmldom";
-import { readViewBox } from "./phase1.js";
-import { fillElementToGeometry, jtsLinealGeometryToPathD } from "./phase4.js";
+import { readViewBox, SOURCE_STROKE_WIDTH_ATTR } from "./phase1.js";
+import type Geometry from "jsts/org/locationtech/jts/geom/Geometry.js";
+import {
+  FILL_OFFSET_ATTR,
+  fillElementToGeometry,
+  jtsGeometryToSvgPathD,
+  unionJtsGeometries,
+} from "./phase4.js";
 import {
   deepCloneElement,
   elementChildren,
   localTag,
+  materializeInheritedFill,
   parseSvgXml,
   svgDocumentElement,
   type SvgElement,
@@ -22,8 +29,6 @@ import {
   elementHasVisibleStroke,
   representativeStrokeStyleForMixedPreprocess,
 } from "./svgStrokeDetection.js";
-import type Geometry from "jsts/org/locationtech/jts/geom/Geometry.js";
-
 const GRAPHICAL = new Set([
   "path",
   "line",
@@ -109,12 +114,7 @@ function serializeElement(el: SvgElement): string {
   return new XMLSerializer().serializeToString(el);
 }
 
-function fillBoundaryToStrokedPathMarkup(
-  el: SvgElement,
-  flatness: number,
-  strokeWidth: number,
-  strokeColor: string
-): string {
+function fillGeometryOf(el: SvgElement, flatness: number): Geometry {
   const gFill = fillElementToGeometry(el, flatness);
   if (!gFill) {
     throw new Error(
@@ -125,18 +125,19 @@ function fillBoundaryToStrokedPathMarkup(
   if (gg.isEmpty()) {
     throw new Error("Mixed icon fill-to-stroke: empty fill geometry.");
   }
-  const boundary = (gFill as unknown as { getBoundary(): Geometry }).getBoundary();
-  const bb = boundary as unknown as { isEmpty(): boolean };
-  if (!boundary || bb.isEmpty()) {
-    throw new Error("Mixed icon fill-to-stroke: could not compute fill boundary.");
-  }
-  const d = jtsLinealGeometryToPathD(boundary).trim();
+  return gFill;
+}
+
+function fillToOffsetPathMarkup(gFill: Geometry, strokeWidth: number, strokeColor: string): string {
+  const { d, evenodd } = jtsGeometryToSvgPathD(gFill);
   if (!d) {
-    throw new Error("Mixed icon fill-to-stroke: boundary could not be serialized to a path.");
+    throw new Error("Mixed icon fill-to-stroke: fill could not be serialized to a path.");
   }
+  const rule = evenodd ? ` fill-rule="evenodd"` : "";
   return (
-    `<path fill="${escapeSvgAttr(strokeColor)}" stroke="${escapeSvgAttr(strokeColor)}" stroke-width="${strokeWidth}" ` +
-    `stroke-linecap="round" stroke-linejoin="round" d="${escapeSvgAttr(d)}"/>`
+    `<path ${FILL_OFFSET_ATTR}="1" ${SOURCE_STROKE_WIDTH_ATTR}="${strokeWidth}" ` +
+    `fill="${escapeSvgAttr(strokeColor)}"${rule} ` +
+    `stroke="${escapeSvgAttr(strokeColor)}" stroke-width="${strokeWidth}" d="${escapeSvgAttr(d)}"/>`
   );
 }
 
@@ -144,10 +145,15 @@ export function mixedIconToStrokedSvg(xml: string, opts?: { flatness?: number })
   const flatness = opts?.flatness ?? 1;
   const doc = parseSvgXml(xml);
   const root = svgDocumentElement(doc);
+  materializeInheritedFill(root);
   const [ox, oy, ow, oh] = readViewBox(root);
   const { width: repW, color: repColor } = representativeStrokeStyleForMixedPreprocess(root);
 
+  // Fill-only shapes are offset as one union: overlapping fills (e.g. a solid body plus an
+  // outlined rim) offset separately would open gaps between them at light weights.
   const chunks: string[] = [];
+  const fillGeoms: Geometry[] = [];
+  let fillChunkIndex = -1;
   for (const el of collectGraphicalElements(root)) {
     const hasS = elementHasVisibleStroke(el);
     const hasF = elementHasVisibleFill(el);
@@ -155,20 +161,34 @@ export function mixedIconToStrokedSvg(xml: string, opts?: { flatness?: number })
     if (hasS && !hasF) {
       chunks.push(serializeElement(el));
     } else if (!hasS && hasF) {
-      chunks.push(fillBoundaryToStrokedPathMarkup(el, flatness, repW, repColor));
+      if (localTag(el) === "text") {
+        chunks.push(serializeElement(el));
+        continue;
+      }
+      if (fillChunkIndex === -1) {
+        fillChunkIndex = chunks.length;
+        chunks.push("");
+      }
+      fillGeoms.push(fillGeometryOf(el, flatness));
     } else if (hasS && hasF) {
+      // The stroke ring carries the weight; offsetting the fill too would open a gap
+      // between them at weights lighter than Regular.
       const fillOnly = deepCloneElement(el);
       stripStrokeFromElement(fillOnly);
       chunks.push(serializeElement(fillOnly));
-      if (localTag(el) !== "text") {
-        chunks.push(fillBoundaryToStrokedPathMarkup(el, flatness, repW, repColor));
-      }
       const strokeOnly = deepCloneElement(el);
       stripFillFromElement(strokeOnly);
+      strokeOnly.setAttribute("fill", "none");
       chunks.push(serializeElement(strokeOnly));
     } else {
       chunks.push(serializeElement(el));
     }
+  }
+
+  if (fillChunkIndex !== -1) {
+    const merged = unionJtsGeometries(fillGeoms);
+    if (!merged) throw new Error("Mixed icon fill-to-stroke: empty fill geometry.");
+    chunks[fillChunkIndex] = fillToOffsetPathMarkup(merged, repW, repColor);
   }
 
   if (!chunks.length) {

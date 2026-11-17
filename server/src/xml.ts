@@ -55,6 +55,28 @@ export function elementChildren(el: SvgElement): SvgElement[] {
   return out;
 }
 
+const SHAPE_TAGS = new Set(["path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text"]);
+
+function declaredFill(el: SvgElement): string | null {
+  const a = el.getAttribute("fill");
+  if (a !== null && a.trim()) return a.trim();
+  const m = /(?:^|;)\s*fill\s*:\s*([^;]+)/i.exec(el.getAttribute("style") ?? "");
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * Copy a fill inherited from an ancestor (e.g. Figma's `<svg fill="none">`) onto shapes that
+ * don't declare one, so they keep their paint after being moved out of that ancestor.
+ */
+export function materializeInheritedFill(root: SvgElement): void {
+  const walk = (el: SvgElement, inherited: string | null) => {
+    const own = declaredFill(el);
+    if (!own && inherited && SHAPE_TAGS.has(localTag(el))) el.setAttribute("fill", inherited);
+    for (const c of elementChildren(el)) walk(c, own ?? inherited);
+  };
+  walk(root, null);
+}
+
 export function deepCloneElement(el: SvgElement): SvgElement {
   return el.cloneNode(true) as SvgElement;
 }

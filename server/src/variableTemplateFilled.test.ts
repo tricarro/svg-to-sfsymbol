@@ -35,44 +35,68 @@ function slotContentGroupById(svgXml: string, slotId: string): string | null {
   return new XMLSerializer().serializeToString(g);
 }
 
+function slotPathDs(svgXml: string, slotId: string): string[] {
+  const g = slotContentGroupById(svgXml, slotId);
+  if (!g) return [];
+  return [...g.matchAll(/ d="([^"]*)"/g)].map((m) => m[1]);
+}
+
+function xExtent(ds: string[]): number {
+  const xs = ds.flatMap((d) =>
+    [...d.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].map((m) => parseFloat(m[1]))
+  );
+  return Math.max(...xs) - Math.min(...xs);
+}
+
+const commandSignature = (ds: string[]) => ds.map((d) => d.replace(/[^A-Za-z]/g, ""));
+
 describe("mergeFilledIconIntoVariableTemplate", () => {
-  it("merges fill-only icon into three S slots and removes wireframes", () => {
+  const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="black"/></svg>`;
+
+  it("merges fill-only icon into three S slots as paths and removes wireframes", () => {
     if (!existsSync(variableTemplatePath)) return;
+    const out = mergeFilledIconIntoVariableTemplate(icon, { templatePath: variableTemplatePath }).toString("utf-8");
 
-    const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="black"/></svg>`;
-    const buf = mergeFilledIconIntoVariableTemplate(icon, { templatePath: variableTemplatePath });
-    const out = buf.toString("utf-8");
-
-    expect(out).toContain('id="Ultralight-S"');
-    expect(out).toContain('id="Regular-S"');
-    expect(out).toContain('id="Black-S"');
-    expect(out).toContain("circle");
+    for (const id of ["Ultralight-S", "Regular-S", "Black-S"]) {
+      expect(slotPathDs(out, id)).toHaveLength(1);
+    }
+    expect(out).not.toContain("<circle");
     expect(out).not.toMatch(/<path[^>]*class="[^"]*SFSymbolsPreviewWireframe/);
   });
 
-  it("applies erode filter to Ultralight-S, dilate to Black-S, none on Regular-S", () => {
+  it("builds weights from real outline offsets with interpolation-compatible structure", () => {
     if (!existsSync(variableTemplatePath)) return;
-
-    const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="black"/></svg>`;
     const out = mergeFilledIconIntoVariableTemplate(icon, { templatePath: variableTemplatePath }).toString("utf-8");
 
-    expect(out).toContain('id="svg2sfsym-morph-ultralight"');
-    expect(out).toContain('id="svg2sfsym-morph-black"');
-    expect(out).toMatch(/<feMorphology[^>]*operator="erode"/);
-    expect(out).toMatch(/<feMorphology[^>]*operator="dilate"/);
+    expect(out).not.toContain("<filter");
+    expect(out).not.toContain("filter=");
+    expect(out).not.toMatch(/scale\(/);
 
-    const ultra = slotContentGroupById(out, "Ultralight-S");
-    const regular = slotContentGroupById(out, "Regular-S");
-    const black = slotContentGroupById(out, "Black-S");
-    expect(ultra).toBeTruthy();
-    expect(regular).toBeTruthy();
-    expect(black).toBeTruthy();
-    expect(ultra).toContain('filter="url(#svg2sfsym-morph-ultralight)"');
-    expect(black).toContain('filter="url(#svg2sfsym-morph-black)"');
-    expect(regular).not.toContain("filter=");
+    const ultra = slotPathDs(out, "Ultralight-S");
+    const regular = slotPathDs(out, "Regular-S");
+    const black = slotPathDs(out, "Black-S");
+    expect(commandSignature(ultra)).toEqual(commandSignature(regular));
+    expect(commandSignature(black)).toEqual(commandSignature(regular));
+    expect(xExtent(ultra)).toBeLessThan(xExtent(regular));
+    expect(xExtent(black)).toBeGreaterThan(xExtent(regular));
+  });
 
-    expect(ultra).toMatch(/scale\(/);
-    expect(black).toMatch(/scale\(/);
-    expect(regular).not.toMatch(/scale\(/);
+  it("writes margin guides around each slot's artwork", () => {
+    if (!existsSync(variableTemplatePath)) return;
+    const out = mergeFilledIconIntoVariableTemplate(icon, { templatePath: variableTemplatePath }).toString("utf-8");
+    for (const id of ["Ultralight-S", "Regular-S", "Black-S"]) {
+      expect(out.match(new RegExp(`id="left-margin-${id}"`, "g"))).toHaveLength(1);
+      expect(out.match(new RegExp(`id="right-margin-${id}"`, "g"))).toHaveLength(1);
+    }
+  });
+
+  it("drops shapes with no visible fill", () => {
+    if (!existsSync(variableTemplatePath)) return;
+    const withHidden =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">` +
+      `<rect width="24" height="24"/>` +
+      `<circle cx="12" cy="12" r="8" fill="black"/></svg>`;
+    const out = mergeFilledIconIntoVariableTemplate(withHidden, { templatePath: variableTemplatePath }).toString("utf-8");
+    expect(slotPathDs(out, "Regular-S")).toHaveLength(1);
   });
 });

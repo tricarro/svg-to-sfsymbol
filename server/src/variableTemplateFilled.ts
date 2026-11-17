@@ -7,7 +7,19 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import SvgPath from "svgpath";
-import { buildVariantSvg, readViewBox } from "./phase1.js";
+import type Geometry from "jsts/org/locationtech/jts/geom/Geometry.js";
+import { formatCoord } from "./curveFit.js";
+import { offsetFilledPathD, type FillRule } from "./pathOffset.js";
+import { buildVariantSvg, readViewBox, SMALL_SIDE_PX } from "./phase1.js";
+import { STROKE_WIDTH_BY_WEIGHT_SUFFIX } from "./phase3.js";
+import { fillElementToGeometry, unionJtsGeometries } from "./phase4.js";
+import {
+  bboxCenter,
+  elementsBBox,
+  MARGIN_PADDING_RATIO,
+  shapeToPathD,
+  writeMarginGuides,
+} from "./slotLayout.js";
 import {
   elementChildren,
   elementToBytes,
@@ -24,45 +36,86 @@ const WIREFRAME_CLASS = "SFSymbolsPreviewWireframe";
 const VARIABLE_SLOT_IDS = ["Ultralight-S", "Regular-S", "Black-S"] as const;
 const ENV_VARIABLE_TEMPLATE = "SFSYMBOL_VARIABLE_TEMPLATE_PATH";
 
-/** Stable IDs — unlikely to collide with user icon defs (prefix + descriptive). */
-const MORPH_FILTER_ID_ULTRALIGHT = "svg2sfsym-morph-ultralight";
-const MORPH_FILTER_ID_BLACK = "svg2sfsym-morph-black";
+const SHAPE_TAGS = new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline"]);
+const SHAPE_GEOMETRY_ATTRS = ["d", "x", "y", "width", "height", "rx", "ry", "cx", "cy", "r", "points"];
 
 /**
- * feMorphology radius in user units (112×112 normalized icon space).
- * PRD target ~2 inward / ~4 outward; tune visually if needed.
+ * Outline offset for a slot, in normalized icon units. The artwork as drawn is Regular-S;
+ * its line thickness (estimated as 2·area/perimeter, capped at the Regular-S stroke width)
+ * is scaled by the stroke-table ratio for the slot's weight.
  */
-const MORPH_ERODE_RADIUS = 3;
-const MORPH_DILATE_RADIUS = 2;
-
-/** Expanded filter region (fractions of object bounding box) so dilate is not clipped. */
-const MORPH_FILTER_REGION = { x: "-0.5", y: "-0.5", width: "2", height: "2" } as const;
-
-/** Normalized icon is built at this side length; Regular-S uses scale 1. */
-const VARIABLE_ICON_BASE_SIDE = 112;
-/** Ultralight / Black visual size in the same user units as the 112 baseline. */
-const VARIABLE_ULTRALIGHT_SIDE = 104;
-const VARIABLE_BLACK_SIDE = 120;
-
-function slotVisualScale(slotId: string): number {
-  if (slotId === "Ultralight-S") return VARIABLE_ULTRALIGHT_SIDE / VARIABLE_ICON_BASE_SIDE;
-  if (slotId === "Black-S") return VARIABLE_BLACK_SIDE / VARIABLE_ICON_BASE_SIDE;
-  return 1;
+function slotOffset(slotId: string, thickness: number): number {
+  const regular = STROKE_WIDTH_BY_WEIGHT_SUFFIX["Regular-S"];
+  const target = STROKE_WIDTH_BY_WEIGHT_SUFFIX[slotId] ?? regular;
+  const t = Math.min(thickness, regular);
+  return (t / 2) * (target / regular - 1);
 }
 
-/** Uniform scale about icon center so the center still aligns with the slot wireframe. */
-function slotContentTransform(
-  tx: number,
-  ty: number,
-  iconCenterX: number,
-  iconCenterY: number,
-  slotId: string
-): string {
-  const s = slotVisualScale(slotId);
-  if (s === 1) {
-    return `translate(${tx} ${ty})`;
+function estimateLineThickness(nodes: SvgElement[]): number {
+  const geoms: Geometry[] = [];
+  const walk = (el: SvgElement) => {
+    if (localTag(el) === "path") {
+      const g = fillElementToGeometry(el, 0.5);
+      if (g) geoms.push(g);
+    }
+    for (const c of elementChildren(el)) walk(c);
+  };
+  nodes.forEach(walk);
+  const all = unionJtsGeometries(geoms) as unknown as { getArea(): number; getLength(): number } | null;
+  if (!all || all.getLength() <= 0) return STROKE_WIDTH_BY_WEIGHT_SUFFIX["Regular-S"];
+  return (2 * all.getArea()) / all.getLength();
+}
+
+function fillRuleOf(el: SvgElement): FillRule {
+  let raw = el.getAttribute("fill-rule") ?? "";
+  if (!raw) {
+    const m = /fill-rule\s*:\s*([a-z]+)/i.exec(el.getAttribute("style") ?? "");
+    raw = m ? m[1] : "";
   }
-  return `translate(${tx} ${ty}) translate(${iconCenterX} ${iconCenterY}) scale(${s}) translate(${-iconCenterX} ${-iconCenterY})`;
+  return raw.trim().toLowerCase() === "evenodd" ? "evenodd" : "nonzero";
+}
+
+function ownFill(el: SvgElement): string | null {
+  const a = el.getAttribute("fill");
+  if (a !== null && a.trim()) return a.trim().toLowerCase();
+  const m = /(?:^|;)\s*fill\s*:\s*([^;]+)/i.exec(el.getAttribute("style") ?? "");
+  return m ? m[1].trim().toLowerCase() : null;
+}
+
+/**
+ * Replace rect/circle/ellipse/polygon/polyline with equivalent <path> elements and drop shapes
+ * whose (inherited) fill is none, since SF Symbols counts hidden paths as outlines.
+ */
+function shapesToPaths(el: SvgElement, doc: SvgDocument, inheritedFill: string | null = ownFill(el)): void {
+  for (const ch of [...elementChildren(el)]) {
+    const tag = localTag(ch);
+    const fill = ownFill(ch) ?? inheritedFill;
+    if (SHAPE_TAGS.has(tag) && (fill === "none" || fill === "transparent")) {
+      el.removeChild(ch);
+      continue;
+    }
+    if (SHAPE_TAGS.has(tag) && tag !== "path") {
+      const d = shapeToPathD(ch);
+      if (!d) continue;
+      const p = doc.createElementNS(SVG_NS, "path");
+      for (let i = 0; i < ch.attributes.length; i++) {
+        const a = ch.attributes[i];
+        if (!SHAPE_GEOMETRY_ATTRS.includes(a.name)) p.setAttribute(a.name, a.value);
+      }
+      p.setAttribute("d", d);
+      el.replaceChild(p, ch);
+    } else {
+      shapesToPaths(ch, doc, fill);
+    }
+  }
+}
+
+function offsetPathsInTree(el: SvgElement, delta: number): void {
+  if (localTag(el) === "path") {
+    const d = el.getAttribute("d");
+    if (d) el.setAttribute("d", offsetFilledPathD(d, delta, fillRuleOf(el)));
+  }
+  for (const c of elementChildren(el)) offsetPathsInTree(c, delta);
 }
 
 function expandUser(p: string): string {
@@ -123,35 +176,6 @@ function ensureTemplateDefs(svgRoot: SvgElement): SvgElement {
   const defs = doc.createElementNS(SVG_NS, "defs");
   svgRoot.insertBefore(defs, svgRoot.firstChild);
   return defs;
-}
-
-function appendMorphologyFilter(
-  defs: SvgElement,
-  doc: SvgDocument,
-  id: string,
-  operator: "erode" | "dilate",
-  radius: number
-): void {
-  if (doc.getElementById(id)) return;
-  const f = doc.createElementNS(SVG_NS, "filter");
-  f.setAttribute("id", id);
-  f.setAttribute("filterUnits", "objectBoundingBox");
-  f.setAttribute("x", MORPH_FILTER_REGION.x);
-  f.setAttribute("y", MORPH_FILTER_REGION.y);
-  f.setAttribute("width", MORPH_FILTER_REGION.width);
-  f.setAttribute("height", MORPH_FILTER_REGION.height);
-  const morph = doc.createElementNS(SVG_NS, "feMorphology");
-  morph.setAttribute("in", "SourceGraphic");
-  morph.setAttribute("operator", operator);
-  morph.setAttribute("radius", String(radius));
-  f.appendChild(morph);
-  defs.appendChild(f);
-}
-
-/** Idempotent: skips creation if each filter id already exists in the document. */
-function ensureMorphologyFilters(defs: SvgElement, doc: SvgDocument): void {
-  appendMorphologyFilter(defs, doc, MORPH_FILTER_ID_ULTRALIGHT, "erode", MORPH_ERODE_RADIUS);
-  appendMorphologyFilter(defs, doc, MORPH_FILTER_ID_BLACK, "dilate", MORPH_DILATE_RADIUS);
 }
 
 function pathBBoxFromD(d: string): [number, number, number, number] {
@@ -263,9 +287,10 @@ function fillSlotWithVisuals(
   slot: SvgElement,
   visual: SvgElement[],
   templateDoc: SvgDocument,
-  iconCenterX: number,
-  iconCenterY: number,
-  slotId: string
+  templateRoot: SvgElement,
+  slotId: string,
+  delta: number,
+  side: number
 ): void {
   let wire: SvgElement | null = null;
   for (const child of elementChildren(slot)) {
@@ -283,24 +308,23 @@ function fillSlotWithVisuals(
     throw new Error(`Wireframe path in slot ${slot.getAttribute("id")} has no d.`);
   }
   const [bx, by, bw, bh] = pathBBoxFromD(d);
-  const cxBox = bx + bw / 2;
-  const cyBox = by + bh / 2;
-  const tx = cxBox - iconCenterX;
-  const ty = cyBox - iconCenterY;
+
+  const nodes = visual.map((node) => templateDoc.importNode(node, true) as SvgElement);
+  for (const n of nodes) offsetPathsInTree(n, delta);
+  const art = elementsBBox(nodes) ?? { minX: 0, minY: 0, maxX: side, maxY: side };
+  const [cxArt, cyArt] = bboxCenter(art);
+  const tx = bx + bw / 2 - cxArt;
+  const ty = by + bh / 2 - cyArt;
 
   slot.removeChild(wire);
 
   const wrap = templateDoc.createElementNS(SVG_NS, "g");
-  wrap.setAttribute("transform", slotContentTransform(tx, ty, iconCenterX, iconCenterY, slotId));
-  if (slotId === "Ultralight-S") {
-    wrap.setAttribute("filter", `url(#${MORPH_FILTER_ID_ULTRALIGHT})`);
-  } else if (slotId === "Black-S") {
-    wrap.setAttribute("filter", `url(#${MORPH_FILTER_ID_BLACK})`);
-  }
-  for (const node of visual) {
-    wrap.appendChild(templateDoc.importNode(node, true));
-  }
+  wrap.setAttribute("transform", `translate(${formatCoord(tx)} ${formatCoord(ty)})`);
+  for (const n of nodes) wrap.appendChild(n);
   slot.appendChild(wrap);
+
+  const placed = { minX: art.minX + tx, minY: art.minY + ty, maxX: art.maxX + tx, maxY: art.maxY + ty };
+  writeMarginGuides(templateRoot, slot, slotId, placed, side * MARGIN_PADDING_RATIO);
 }
 
 /**
@@ -314,25 +338,24 @@ export function mergeFilledIconIntoVariableTemplate(
 
   const iconDoc = parseSvgXml(iconSvgXml);
   const iconRootOrig = svgDocumentElement(iconDoc);
-  const normalizedRoot = buildVariantSvg(iconRootOrig, VARIABLE_ICON_BASE_SIDE);
+  const normalizedRoot = buildVariantSvg(iconRootOrig, SMALL_SIDE_PX);
 
-  const [ox, oy, sw, sh] = readViewBox(normalizedRoot);
+  const [, , sw, sh] = readViewBox(normalizedRoot);
   if (sw <= 0 || sh <= 0) {
     throw new Error("Invalid normalized icon viewBox dimensions.");
   }
-  const iconCenterX = ox + sw / 2;
-  const iconCenterY = oy + sh / 2;
+  if (!normalizedRoot.ownerDocument) throw new Error("normalized icon has no owner document");
+  shapesToPaths(normalizedRoot, normalizedRoot.ownerDocument);
 
   const [defsNodes, visual] = partitionIconChildren(normalizedRoot);
+  const thickness = estimateLineThickness(visual);
 
   const templateDoc = parseSvgFile(templatePath);
   const templateRoot = svgDocumentElement(templateDoc);
   const symbols = findSymbolsGroup(templateRoot);
-  const templateDefs = ensureTemplateDefs(templateRoot);
-  ensureMorphologyFilters(templateDefs, templateDoc);
 
   if (defsNodes.length) {
-    mergeIconDefsInto(templateDefs, defsNodes, templateDoc);
+    mergeIconDefsInto(ensureTemplateDefs(templateRoot), defsNodes, templateDoc);
   }
 
   for (const id of VARIABLE_SLOT_IDS) {
@@ -340,7 +363,7 @@ export function mergeFilledIconIntoVariableTemplate(
     if (!slot) {
       throw new Error(`Variable template missing required slot <g id="${id}">.`);
     }
-    fillSlotWithVisuals(slot, visual, templateDoc, iconCenterX, iconCenterY, id);
+    fillSlotWithVisuals(slot, visual, templateDoc, templateRoot, id, slotOffset(id, thickness), sw);
   }
 
   return elementToBytes(templateRoot);

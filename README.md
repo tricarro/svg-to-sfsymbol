@@ -34,7 +34,7 @@ Root [`package.json`](package.json) defines **npm workspaces** `server` and `bui
 
 **Input:** One `.svg`. The server classifies it (stroke detection and routing in [`server/src/svgStrokeDetection.ts`](server/src/svgStrokeDetection.ts)):
 
-- **Stroke-only** and **mixed** (stroke + fill): square pipeline after optional preprocessing so filled regions become stroked boundaries for mixed icons.
+- **Stroke-only** and **mixed** (stroke + fill): square pipeline; for mixed icons, filled regions are marked so phase 4 grows/shrinks them with the weight instead of stroking their boundary.
 - **Fill-only:** scaled into the variable template (`Ultralight-S`, `Regular-S`, `Black-S` slots).
 
 **Output:** Downloadable template SVG:
@@ -129,13 +129,13 @@ export SFSYMBOL_VARIABLE_TEMPLATE_PATH=/path/to/square_variable_template.svg
 
 Implementation: **`server/src/`** (phases). The **`build-pipeline`** package mirrors the flow with different option names—keep them in sync when changing behavior (see **Dual TypeScript trees** below).
 
-1. **Phase 1 — Size variants** — Large (164×164), medium (136×136), small (112×112) squares; affines baked into geometry so strokes are not scaled incorrectly by parent `transform`.
+1. **Phase 1 — Size variants** — Medium 136×136, with small and large at Apple's scale factors (×0.783 ≈ 106.5, ×1.29 ≈ 175.4); affines baked into geometry so strokes are not scaled incorrectly by parent `transform`.
 2. **Phase 2 — Weight slots** — Nine weight names per size in SF Symbol order; intermediate size filenames removed.
 3. **Phase 3 — Stroke widths** — Per weight and scale (L/M/S) from a fixed table.
-4. **Phase 4 — Stroke to fill** — Stroked outlines → filled geometry (**JSTS**); sibling merge pass disabled (matches legacy Python).
-5. **Phase 5 — Template merge** — Places each variant in the square template `<g id="Symbols">…`, centers with **translate only**, removes preview wireframes.
+4. **Phase 4 — Stroke to fill** — Stroked outlines → filled geometry (**JSTS**), then refit as straight lines plus cubic Béziers ([`curveFit.ts`](server/src/curveFit.ts)) with 7-decimal coordinates. Filled parts of mixed icons are offset by (weight width − Regular width) / 2, so Regular keeps the drawn shape.
+5. **Phase 5 — Template merge** — Places each variant in the square template `<g id="Symbols">…`, centers the artwork's bounding box on the slot wireframe (cap-height center), writes `left-margin-*` / `right-margin-*` guides for every variant ([`slotLayout.ts`](server/src/slotLayout.ts)), removes preview wireframes.
 
-**Fill-only** path bypasses these phases and merges into the variable template in [`server/src/variableTemplateFilled.ts`](server/src/variableTemplateFilled.ts).
+**Fill-only** path bypasses these phases and merges into the variable template in [`server/src/variableTemplateFilled.ts`](server/src/variableTemplateFilled.ts): the drawing is Regular-S, and Ultralight-S / Black-S are real outline offsets ([`pathOffset.ts`](server/src/pathOffset.ts)) that keep the same paths, commands and point counts so SF Symbols can interpolate the other 24 variants. Shapes with no visible fill are dropped.
 
 ---
 
@@ -148,6 +148,7 @@ Implementation: **`server/src/`** (phases). The **`build-pipeline`** package mir
 | **Paths** | `svgpath` |
 | **Stroke → fill** | `jsts` |
 | **Routing** | `classifySvgRouting` — filled → variable merge; mixed → [`mixedIconToStrokedSvg.ts`](server/src/mixedIconToStrokedSvg.ts) then square pipeline; stroke-only → square pipeline. [`mixedIconToFilled.ts`](server/src/mixedIconToFilled.ts) is for tests/reuse, not the HTTP convert path. |
+| **Curves / offsets** | [`curveFit.ts`](server/src/curveFit.ts) (polygon → Béziers), [`pathOffset.ts`](server/src/pathOffset.ts) (structure-preserving fill offset), [`slotLayout.ts`](server/src/slotLayout.ts) (bbox, centering, margin guides) |
 
 **Programmatic use**
 
@@ -158,7 +159,7 @@ Implementation: **`server/src/`** (phases). The **`build-pipeline`** package mir
 
 ### Dual TypeScript trees
 
-The **server** and **`build-pipeline`** packages both contain conversion logic. Until the server is rewired to the package, **edit both** (or accept drift). Template copies live under **`resources/`** (server defaults) and **`build-pipeline/resources/`** (package defaults).
+The **server** and **`build-pipeline`** packages both contain conversion logic. Until the server is rewired to the package, **edit both** (or accept drift). The SF Symbols guideline fixes (scale factors, curve refitting, margins, fill offsets, filter-free variable template) currently live in **server** only. Template copies live under **`resources/`** (server defaults) and **`build-pipeline/resources/`** (package defaults).
 
 ---
 
