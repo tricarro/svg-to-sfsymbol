@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { expandStrokesInTree, runPhase4 } from "./phase4.js";
+import {
+  expandStrokesInTree,
+  fillElementToGeometry,
+  mergeOverlappingFills,
+  runPhase4,
+} from "./phase4.js";
 import { parseSvgString, runPhase1 } from "./phase1.js";
 import { runPhase2 } from "./phase2.js";
 import { runPhase3 } from "./phase3.js";
@@ -25,6 +30,50 @@ describe("expandStrokesInTree", () => {
     expect(p.getAttribute("fill")).toBe("#000");
     const d = p.getAttribute("d") || "";
     expect(d).toContain("L");
+  });
+
+  it("converts stroked rect (with rx) and circle to outline paths", () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+    <rect x="3" y="10" width="26" height="6" rx="1" stroke="#000" stroke-width="1" fill="none"/>
+    <circle cx="16" cy="6" r="3" stroke="#000" stroke-width="1" fill="none"/>
+    </svg>`;
+    const root = parseSvgString(svg);
+    expect(expandStrokesInTree(root)).toBe(2);
+    const doc = root.ownerDocument!;
+    expect(doc.getElementsByTagName("rect").length).toBe(0);
+    expect(doc.getElementsByTagName("circle").length).toBe(0);
+    const paths = doc.getElementsByTagName("path");
+    expect(paths.length).toBe(2);
+    for (let i = 0; i < paths.length; i++) {
+      const p = paths.item(i)!;
+      expect(p.getAttribute("stroke")).toBeNull();
+      expect(p.getAttribute("fill-rule")).toBe("evenodd");
+    }
+  });
+
+  it("fills nonzero pieces by winding number, not by orientation", () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+    <path d="M0 0H10V10H0Z M12 12V14H14V12Z M2 2V8H8V2Z" fill="#000"/>
+    </svg>`;
+    const root = parseSvgString(svg);
+    const path = root.ownerDocument!.getElementsByTagName("path").item(0)!;
+    const g = fillElementToGeometry(path, 0.1) as unknown as { getArea(): number };
+    expect(g.getArea()).toBeCloseTo(100 - 36 + 4, 5);
+  });
+
+  it("merges a fill and its outlined stroke into one non-overlapping path", () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+    <path d="M8 8H24V24H8Z" fill="#000"/>
+    <path d="M8 8H24V24H8Z" fill="none" stroke="#000" stroke-width="2"/>
+    <path d="M28 2H30V4H28Z" fill="#000"/>
+    </svg>`;
+    const root = parseSvgString(svg);
+    expandStrokesInTree(root);
+    expect(mergeOverlappingFills(root)).toBe(2);
+    const paths = root.ownerDocument!.getElementsByTagName("path");
+    expect(paths.length).toBe(2);
+    const merged = fillElementToGeometry(paths.item(0)!, 0.05) as unknown as { getArea(): number };
+    expect(merged.getArea()).toBeCloseTo(18 * 18, 0);
   });
 
   it("skips stroke-dasharray", () => {

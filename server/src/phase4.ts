@@ -14,7 +14,13 @@ import MultiPolygon from "jsts/org/locationtech/jts/geom/MultiPolygon.js";
 import GeometryCollection from "jsts/org/locationtech/jts/geom/GeometryCollection.js";
 import Geometry from "jsts/org/locationtech/jts/geom/Geometry.js";
 import UnaryUnionOp from "jsts/org/locationtech/jts/operation/union/UnaryUnionOp.js";
-import { elementIsStroked, parseWeightStem } from "./phase3.js";
+import OverlayOp from "jsts/org/locationtech/jts/operation/overlay/OverlayOp.js";
+import Polygonizer from "jsts/org/locationtech/jts/operation/polygonize/Polygonizer.js";
+import InteriorPointArea from "jsts/org/locationtech/jts/algorithm/InteriorPointArea.js";
+import { ringToCurvePathD } from "./curveFit.js";
+import { SOURCE_STROKE_WIDTH_ATTR } from "./phase1.js";
+import { shapeToPathD } from "./slotLayout.js";
+import { elementIsStroked, parseWeightStem, STROKE_WIDTH_BY_WEIGHT_SUFFIX } from "./phase3.js";
 import {
   elementChildren,
   elementToBytes,
@@ -318,24 +324,7 @@ function stripStrokePresentation(el: SvgElement): void {
 }
 
 function ringToD(coords: [number, number][]): string {
-  if (coords.length < 2) return "";
-  let c = [...coords];
-  const last = c[c.length - 1];
-  const first = c[0];
-  if (
-    c.length >= 2 &&
-    Math.abs(first[0] - last[0]) < COORD_EPS &&
-    Math.abs(first[1] - last[1]) < COORD_EPS
-  ) {
-    c = c.slice(0, -1);
-  }
-  if (c.length < 2) return "";
-  const parts = [`M ${c[0][0].toPrecision(6)},${c[0][1].toPrecision(6)}`];
-  for (let i = 1; i < c.length; i++) {
-    parts.push(`L ${c[i][0].toPrecision(6)},${c[i][1].toPrecision(6)}`);
-  }
-  parts.push("Z");
-  return parts.join(" ");
+  return ringToCurvePathD(coords);
 }
 
 function coordinatesToOpenPathD(coords: { x: number; y: number }[]): string {
@@ -508,19 +497,93 @@ function subpathToFilledPolygon(sp: Subpath): Polygon | null {
   }
 }
 
-function fillSubpathsToGeometry(subpaths: Subpath[]): Geometry | null {
-  const geoms: Geometry[] = [];
-  for (const sp of subpaths) {
-    const poly = subpathToFilledPolygon(sp);
-    if (poly) {
-      const gg = poly as unknown as { isEmpty(): boolean };
-      if (!gg.isEmpty()) geoms.push(poly as unknown as Geometry);
+function signedRingArea(coords: [number, number][]): number {
+  let a = 0;
+  for (let i = 0; i < coords.length; i++) {
+    const [x0, y0] = coords[i];
+    const [x1, y1] = coords[(i + 1) % coords.length];
+    a += x0 * y1 - x1 * y0;
+  }
+  return a / 2;
+}
+
+function cleanPolygon(sp: Subpath): Geometry | null {
+  const poly = subpathToFilledPolygon(sp);
+  if (!poly) return null;
+  const clean = new BufferOp(poly, new BufferParameters()).getResultGeometry(0) as unknown as Geometry;
+  return (clean as unknown as { isEmpty(): boolean }).isEmpty() ? null : clean;
+}
+
+function windingNumber(x: number, y: number, coords: [number, number][]): number {
+  let wn = 0;
+  const n = coords.length;
+  for (let i = 0; i < n; i++) {
+    const [x0, y0] = coords[i];
+    const [x1, y1] = coords[(i + 1) % n];
+    const side = (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0);
+    if (y0 <= y) {
+      if (y1 > y && side > 0) wn++;
+    } else if (y1 <= y && side < 0) {
+      wn--;
     }
   }
-  if (!geoms.length) return null;
-  if (geoms.length === 1) return geoms[0];
-  const gc = geomFact.createGeometryCollection(geoms);
-  return UnaryUnionOp.union(gc) ?? null;
+  return wn;
+}
+
+/**
+ * Exact nonzero fill: node every ring against the others, polygonize the arrangement and
+ * keep faces whose winding number is non-zero. Outlined-stroke exports (Figma) build one
+ * shape from many overlapping pieces wound in both directions, so sign-based shortcuts
+ * carve notches out of them.
+ */
+function nonzeroFillGeometry(subpaths: Subpath[]): Geometry | null {
+  const rings = subpaths
+    .map((sp) => {
+      const c = sp.coords.slice();
+      const [fx, fy] = c[0];
+      const [lx, ly] = c[c.length - 1];
+      if (fx === lx && fy === ly) c.pop();
+      return c;
+    })
+    .filter((c) => c.length >= 3);
+  if (!rings.length) return null;
+  const lines = rings.map((c) =>
+    geomFact.createLineString(coordsToLinearRing(c.concat([c[0]])))
+  );
+  const noded = UnaryUnionOp.union(geomFact.createMultiLineString(lines));
+  const polygonizer = new Polygonizer();
+  polygonizer.add(noded);
+  const faces = (polygonizer.getPolygons() as unknown as { toArray(): Geometry[] }).toArray();
+  const kept = faces.filter((face) => {
+    const p = InteriorPointArea.getInteriorPoint(face) as { x: number; y: number } | null;
+    if (!p) return false;
+    return rings.reduce((wn, c) => wn + windingNumber(p.x, p.y, c), 0) !== 0;
+  });
+  return unionJtsGeometries(kept);
+}
+
+/** Fill area of a multi-subpath shape. evenodd: XOR of rings. nonzero: exact winding. */
+function fillSubpathsToGeometry(subpaths: Subpath[], fillRule: "nonzero" | "evenodd" = "nonzero"): Geometry | null {
+  const rings: { g: Geometry; area: number }[] = [];
+  for (const sp of subpaths) {
+    const g = cleanPolygon(sp);
+    if (g) rings.push({ g, area: signedRingArea(sp.coords) });
+  }
+  if (!rings.length) return null;
+  if (rings.length === 1) return rings[0].g;
+  if (fillRule === "evenodd") {
+    return rings.slice(1).reduce((acc, r) => OverlayOp.symDifference(acc, r.g) as Geometry, rings[0].g);
+  }
+  return nonzeroFillGeometry(subpaths);
+}
+
+function fillRuleOf(el: SvgElement): "nonzero" | "evenodd" {
+  let raw = el.getAttribute("fill-rule") ?? "";
+  if (!raw) {
+    const style = el.getAttribute("style");
+    if (style) raw = parseStyle(style)["fill-rule"] ?? "";
+  }
+  return raw.trim().toLowerCase() === "evenodd" ? "evenodd" : "nonzero";
 }
 
 function rectToFillPolygon(el: SvgElement): Polygon | null {
@@ -646,7 +709,7 @@ export function fillElementToGeometry(el: SvgElement, flatness: number): Geometr
     const d = el.getAttribute("d");
     if (!d) return null;
     const subpaths = flattenPathToSubpaths(d, flatness);
-    return fillSubpathsToGeometry(subpaths);
+    return fillSubpathsToGeometry(subpaths, fillRuleOf(el));
   }
   if (tag === "polygon") {
     return fillSubpathsToGeometry(polygonSubpaths(el));
@@ -751,13 +814,97 @@ function insertAfter(parent: SvgElement, reference: SvgElement, newEl: SvgElemen
   }
 }
 
+/**
+ * Marks a filled shape (from mixed-icon preprocessing) whose outline should move with the
+ * weight: phase 3 still assigns it a stroke width, and phase 4 offsets the fill by
+ * (width − Regular width) / 2 instead of stroking it, so Regular keeps the designed shape.
+ */
+export const FILL_OFFSET_ATTR = "data-sf-fill-offset";
+
+/** Smallest fraction of a part's area kept when thinning; tiny details shrink less instead of vanishing. */
+const MIN_THINNED_AREA_RATIO = 0.25;
+/** Sliver-cleanup radius as a fraction of the fill's bounding-box diagonal. */
+const SLIVER_RATIO = 0.002;
+
+function offsetFillGeometry(g: Geometry, delta: number): Geometry {
+  if (Math.abs(delta) < 1e-9) return g;
+  const bp = new BufferParameters();
+  bp.setQuadrantSegments(8);
+  bp.setJoinStyle(BufferParameters.JOIN_MITRE);
+  bp.setMitreLimit(1.5);
+  const buffer = (geom: Geometry, dist: number) =>
+    new BufferOp(geom, bp).getResultGeometry(dist) as unknown as Geometry & {
+      isEmpty(): boolean;
+      getArea(): number;
+    };
+  // Outlined-stroke exports leave hair-thin slivers and cracks at joins; a mitred offset
+  // blows each one up into a visible block, so close then open by a tiny radius first.
+  const env = (g as unknown as {
+    getEnvelopeInternal(): { getWidth(): number; getHeight(): number };
+  }).getEnvelopeInternal();
+  const eps = Math.hypot(env.getWidth(), env.getHeight()) * SLIVER_RATIO;
+  const closed = buffer(buffer(g, eps), -eps);
+  const opened = buffer(buffer(closed, -eps), eps);
+  if (!opened.isEmpty()) g = opened;
+
+  if (delta > 0) return buffer(g, delta);
+
+  const parts = g as unknown as { getNumGeometries(): number; getGeometryN(i: number): Geometry };
+  const out: Geometry[] = [];
+  for (let i = 0; i < parts.getNumGeometries(); i++) {
+    const part = parts.getGeometryN(i);
+    const area = (part as unknown as { getArea(): number }).getArea();
+    let kept: Geometry = part;
+    for (const f of [1, 0.75, 0.5, 0.25]) {
+      const thinned = buffer(part, delta * f);
+      if (!thinned.isEmpty() && thinned.getArea() >= area * MIN_THINNED_AREA_RATIO) {
+        kept = thinned;
+        break;
+      }
+    }
+    out.push(kept);
+  }
+  return unionJtsGeometries(out) ?? g;
+}
+
+function convertFillOffsetElement(
+  el: SvgElement,
+  flatness: number,
+  regularStrokeWidth: number | undefined
+): boolean {
+  const d = el.getAttribute("d");
+  if (!d) return false;
+  const g = fillSubpathsToGeometry(flattenPathToSubpaths(d, flatness), fillRuleOf(el));
+  if (!g) return false;
+  // Strokes are reset to absolute per-weight widths, so a fill drawn alongside source strokes
+  // of width w moves its edges by (target - w) / 2 to keep every line in a weight equal.
+  const sourceWidth = parseFloat(el.getAttribute(SOURCE_STROKE_WIDTH_ATTR) ?? "");
+  const baseWidth = Number.isFinite(sourceWidth) && sourceWidth > 0 ? sourceWidth : regularStrokeWidth;
+  const delta = baseWidth === undefined ? 0 : (strokeWidthPx(el) - baseWidth) / 2;
+  const out = geometryToPathD(offsetFillGeometry(g, delta));
+  if (!out.d) return false;
+  const paint = strokePaint(el);
+  el.removeAttribute(FILL_OFFSET_ATTR);
+  el.removeAttribute(SOURCE_STROKE_WIDTH_ATTR);
+  el.setAttribute("d", out.d);
+  el.setAttribute("fill", paint);
+  if (out.evenodd) el.setAttribute("fill-rule", "evenodd");
+  else el.removeAttribute("fill-rule");
+  stripStrokePresentation(el);
+  return true;
+}
+
 function convertPathElement(
   el: SvgElement,
   parent: SvgElement,
   flatness: number,
-  doc: SvgDocument
+  doc: SvgDocument,
+  regularStrokeWidth?: number
 ): boolean {
   if (!elementIsStroked(el) || hasDasharray(el)) return false;
+  if (el.getAttribute(FILL_OFFSET_ATTR) !== null) {
+    return convertFillOffsetElement(el, flatness, regularStrokeWidth);
+  }
   const d = el.getAttribute("d");
   if (!d) return false;
   const subpaths = flattenPathToSubpaths(d, flatness);
@@ -843,6 +990,21 @@ function convertLineLikeElementSimple(
   return true;
 }
 
+const SHAPE_GEOMETRY_ATTRS = new Set(["x", "y", "width", "height", "rx", "ry", "cx", "cy", "r"]);
+
+function shapeElementToPath(el: SvgElement, parent: SvgElement, doc: SvgDocument): SvgElement | null {
+  const d = shapeToPathD(el);
+  if (!d) return null;
+  const p = doc.createElementNS(SVG_NS, "path");
+  for (let i = 0; i < el.attributes.length; i++) {
+    const a = el.attributes[i];
+    if (!SHAPE_GEOMETRY_ATTRS.has(a.name)) p.setAttribute(a.name, a.value);
+  }
+  p.setAttribute("d", d);
+  parent.replaceChild(p, el);
+  return p;
+}
+
 function parentMap(root: SvgElement): Map<SvgElement, SvgElement> {
   const m = new Map<SvgElement, SvgElement>();
   const walk = (el: SvgElement) => {
@@ -865,7 +1027,11 @@ function collectElements(root: SvgElement): SvgElement[] {
   return all;
 }
 
-export function expandStrokesInTree(root: SvgElement, flatness = 1): number {
+export function expandStrokesInTree(
+  root: SvgElement,
+  flatness = 1,
+  opts: { regularStrokeWidth?: number } = {}
+): number {
   const doc = root.ownerDocument as SvgDocument | null;
   if (!doc) throw new Error("expandStrokesInTree: missing ownerDocument");
   let converted = 0;
@@ -878,7 +1044,14 @@ export function expandStrokesInTree(root: SvgElement, flatness = 1): number {
       const parent = pmap.get(el);
       if (parent === undefined) continue;
       if (tag === "path") {
-        if (convertPathElement(el, parent, flatness, doc)) {
+        if (convertPathElement(el, parent, flatness, doc, opts.regularStrokeWidth)) {
+          converted++;
+          changed = true;
+        }
+      } else if (tag === "rect" || tag === "circle" || tag === "ellipse") {
+        if (!elementIsStroked(el) || hasDasharray(el)) continue;
+        const asPath = shapeElementToPath(el, parent, doc);
+        if (asPath && convertPathElement(asPath, parent, flatness, doc, opts.regularStrokeWidth)) {
           converted++;
           changed = true;
         }
@@ -903,10 +1076,71 @@ export function expandStrokesInTree(root: SvgElement, flatness = 1): number {
   return converted;
 }
 
-function processWeightSvgPhase4(path: string, flatness: number): number {
+function fillPaint(el: SvgElement): string {
+  const f = el.getAttribute("fill");
+  if (f) return f.trim().toLowerCase();
+  const style = el.getAttribute("style");
+  return (style ? parseStyle(style).fill : "")?.trim().toLowerCase() ?? "";
+}
+
+const MERGE_FLATNESS = 0.05;
+const MERGE_TAGS = new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline"]);
+
+/**
+ * Union same-colour filled shapes that overlap into one path. SF Symbols combines a layer's
+ * paths so that overlaps cancel out, which turns e.g. a fill plus its outlined stroke into
+ * a hollow double outline; browsers paint them additively, so the template looks fine.
+ */
+export function mergeOverlappingFills(root: SvgElement): number {
+  const pmap = parentMap(root);
+  const items: { el: SvgElement; g: Geometry; paint: string }[] = [];
+  for (const el of collectElements(root)) {
+    if (!MERGE_TAGS.has(localTag(el)) || elementIsStroked(el)) continue;
+    const g = fillElementToGeometry(el, MERGE_FLATNESS);
+    if (!g || (g as unknown as { isEmpty(): boolean }).isEmpty()) continue;
+    items.push({ el, g, paint: fillPaint(el) });
+  }
+  const group = items.map((_, i) => i);
+  const find = (i: number): number => (group[i] === i ? i : (group[i] = find(group[i])));
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (items[i].paint !== items[j].paint || find(i) === find(j)) continue;
+      const overlap = OverlayOp.intersection(items[i].g, items[j].g) as unknown as { getArea(): number };
+      if (overlap.getArea() > 0) group[find(j)] = find(i);
+    }
+  }
+  const clusters = new Map<number, number[]>();
+  items.forEach((_, i) => {
+    const r = find(i);
+    clusters.set(r, [...(clusters.get(r) ?? []), i]);
+  });
+  let merged = 0;
+  for (const members of clusters.values()) {
+    if (members.length < 2) continue;
+    const union = unionJtsGeometries(members.map((i) => items[i].g));
+    if (!union) continue;
+    const { d, evenodd } = geometryToPathD(union);
+    if (!d) continue;
+    const first = items[members[0]].el;
+    const parent = pmap.get(first);
+    if (!parent) continue;
+    const doc = root.ownerDocument as SvgDocument;
+    const path = doc.createElementNS(SVG_NS, "path") as unknown as SvgElement;
+    path.setAttribute("d", d);
+    path.setAttribute("fill", items[members[0]].paint);
+    if (evenodd) path.setAttribute("fill-rule", "evenodd");
+    parent.insertBefore(path, first);
+    for (const i of members) pmap.get(items[i].el)?.removeChild(items[i].el);
+    merged += members.length;
+  }
+  return merged;
+}
+
+function processWeightSvgPhase4(path: string, flatness: number, regularStrokeWidth?: number): number {
   const doc = parseSvgFile(path);
   const svgRoot = svgDocumentElement(doc);
-  const n = expandStrokesInTree(svgRoot, flatness);
+  const n = expandStrokesInTree(svgRoot, flatness, { regularStrokeWidth });
+  mergeOverlappingFills(svgRoot);
   writeFileSync(path, elementToBytes(svgRoot));
   return n;
 }
@@ -917,9 +1151,11 @@ export function runPhase4(outputDir: PathLike, flatness = 1): Record<string, num
   for (const name of readdirSync(dir).filter((f) => f.endsWith(".svg")).sort()) {
     if (name === "original.svg") continue;
     const stem = name.replace(/\.svg$/i, "");
-    if (!parseWeightStem(stem)) continue;
+    const parsed = parseWeightStem(stem);
+    if (!parsed) continue;
     const full = join(dir, name);
-    results[stem] = processWeightSvgPhase4(full, flatness);
+    const regular = STROKE_WIDTH_BY_WEIGHT_SUFFIX[`Regular-${parsed[1]}`];
+    results[stem] = processWeightSvgPhase4(full, flatness, regular);
   }
   return results;
 }

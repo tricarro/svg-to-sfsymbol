@@ -7,6 +7,7 @@ import {
   elementChildren,
   elementToBytes,
   localTag,
+  materializeInheritedFill,
   parseSvgFile,
   parseSvgXml,
   svgDocumentElement,
@@ -49,10 +50,17 @@ export interface SizeVariant {
   sidePx: number;
 }
 
+/** SF Symbols scale factors relative to Medium (Apple "Creating custom symbols"). */
+export const MEDIUM_SIDE_PX = 136;
+export const SMALL_SCALE_FACTOR = 0.783;
+export const LARGE_SCALE_FACTOR = 1.29;
+export const SMALL_SIDE_PX = Math.round(MEDIUM_SIDE_PX * SMALL_SCALE_FACTOR * 1000) / 1000;
+export const LARGE_SIDE_PX = Math.round(MEDIUM_SIDE_PX * LARGE_SCALE_FACTOR * 1000) / 1000;
+
 export const PHASE1_VARIANTS: SizeVariant[] = [
-  { name: "large", sidePx: 164 },
-  { name: "medium", sidePx: 136 },
-  { name: "small", sidePx: 112 },
+  { name: "large", sidePx: LARGE_SIDE_PX },
+  { name: "medium", sidePx: MEDIUM_SIDE_PX },
+  { name: "small", sidePx: SMALL_SIDE_PX },
 ];
 
 export function readViewBox(svgRoot: SvgElement): [number, number, number, number] {
@@ -76,9 +84,25 @@ function partitionVisualChildren(svgRoot: SvgElement): [SvgElement[], SvgElement
   return [defsNodes, other];
 }
 
+/**
+ * Stroke width (in source units) that a fill-only shape stands in for. Scaled with the
+ * geometry here so phase 4 can offset the fill to the same per-weight width as real strokes.
+ */
+export const SOURCE_STROKE_WIDTH_ATTR = "data-sf-source-stroke-width";
+
+function scaleSourceStrokeWidths(el: SvgElement, s: number): void {
+  const raw = el.getAttribute(SOURCE_STROKE_WIDTH_ATTR);
+  if (raw) {
+    const w = parseFloat(raw);
+    if (Number.isFinite(w)) el.setAttribute(SOURCE_STROKE_WIDTH_ATTR, String(w * s));
+  }
+  for (const c of elementChildren(el)) scaleSourceStrokeWidths(c, s);
+}
+
 export function buildVariantSvg(svgRoot: SvgElement, sidePx: number): SvgElement {
   const [ox, oy, ow, oh] = readViewBox(svgRoot);
   const root = deepCloneElement(svgRoot);
+  materializeInheritedFill(root);
 
   const [defsNodes, other] = partitionVisualChildren(root);
   for (const ch of [...elementChildren(root)]) {
@@ -94,6 +118,7 @@ export function buildVariantSvg(svgRoot: SvgElement, sidePx: number): SvgElement
   const m = buildPhase1BakeMatrix(s, ox, oy, tx, ty);
   for (const node of other) {
     bakeVisualSubtree(node, m);
+    scaleSourceStrokeWidths(node, s);
     root.appendChild(node);
   }
 

@@ -6,6 +6,8 @@ import SvgPath from "svgpath";
 import { readViewBox } from "./phase1.js";
 import { PHASE2_SIZE_SUFFIX, PHASE2_WEIGHTS } from "./phase2.js";
 import { parseWeightStem } from "./phase3.js";
+import { formatCoord } from "./curveFit.js";
+import { bboxCenter, elementsBBox, MARGIN_PADDING_RATIO, writeMarginGuides } from "./slotLayout.js";
 import {
   elementChildren,
   elementToBytes,
@@ -167,7 +169,8 @@ function fillSlot(
   slot: SvgElement,
   iconPath: string,
   templateDefs: SvgElement,
-  templateDoc: SvgDocument
+  templateDoc: SvgDocument,
+  templateRoot: SvgElement
 ): void {
   let wire: SvgElement | null = null;
   for (const child of elementChildren(slot)) {
@@ -192,26 +195,29 @@ function fillSlot(
   if (sw <= 0 || sh <= 0) {
     throw new Error(`Invalid icon viewBox dimensions in ${iconPath}`);
   }
-  const cxBox = bx + bw / 2;
-  const cyBox = by + bh / 2;
-  const cxIcon = ox + sw / 2;
-  const cyIcon = oy + sh / 2;
-  const tx = cxBox - cxIcon;
-  const ty = cyBox - cyIcon;
 
   const [defsNodes, visual] = partitionIconChildren(iconRoot);
   if (defsNodes.length) {
     mergeIconDefsInto(templateDefs, defsNodes, templateDoc);
   }
 
+  const art = elementsBBox(visual) ?? { minX: ox, minY: oy, maxX: ox + sw, maxY: oy + sh };
+  const [cxArt, cyArt] = bboxCenter(art);
+  const tx = bx + bw / 2 - cxArt;
+  const ty = by + bh / 2 - cyArt;
+
   slot.removeChild(wire);
 
   const wrap = templateDoc.createElementNS(SVG_NS, "g");
-  wrap.setAttribute("transform", `translate(${tx} ${ty})`);
+  wrap.setAttribute("transform", `translate(${formatCoord(tx)} ${formatCoord(ty)})`);
   for (const node of visual) {
     wrap.appendChild(templateDoc.importNode(node, true));
   }
   slot.appendChild(wrap);
+
+  const sid = slot.getAttribute("id") ?? "";
+  const placed = { minX: art.minX + tx, minY: art.minY + ty, maxX: art.maxX + tx, maxY: art.maxY + ty };
+  writeMarginGuides(templateRoot, slot, sid, placed, sw * MARGIN_PADDING_RATIO);
 }
 
 export function runPhase5(
@@ -256,7 +262,7 @@ export function runPhase5(
       continue;
     }
 
-    fillSlot(slot, iconFile, templateDefs, templateDoc);
+    fillSlot(slot, iconFile, templateDefs, templateDoc, root);
     filled++;
   }
 
